@@ -99,10 +99,12 @@ if [ -n "$KEYBOARD_SHORTCUTS_BUNDLE" ]; then
     echo "📦 Copying KeyboardShortcuts resources from $KEYBOARD_SHORTCUTS_BUNDLE..."
     # Remove any existing bundle first
     rm -rf "$RESOURCES/KeyboardShortcuts_KeyboardShortcuts.bundle"
-    # Create the destination directory with proper permissions
-    mkdir -p "$RESOURCES/KeyboardShortcuts_KeyboardShortcuts.bundle"
-    # Copy with preserved permissions
-    cp -pR "$KEYBOARD_SHORTCUTS_BUNDLE" "$RESOURCES/KeyboardShortcuts_KeyboardShortcuts.bundle"
+    # Copy the entire bundle directory to Resources
+    cp -pR "$KEYBOARD_SHORTCUTS_BUNDLE" "$RESOURCES/"
+    
+    # Copy KeyboardShortcuts bundle to the root of app bundle where it expects to find it
+    echo "📦 Copying KeyboardShortcuts bundle to app root for proper loading..."
+    cp -pR "$KEYBOARD_SHORTCUTS_BUNDLE" "$APP_BUNDLE/"
     
     # Update the Info.plist to use relative paths
     INFO_PLIST="$RESOURCES/KeyboardShortcuts_KeyboardShortcuts.bundle/Info.plist"
@@ -110,8 +112,22 @@ if [ -n "$KEYBOARD_SHORTCUTS_BUNDLE" ]; then
         plutil -replace CFBundleExecutable -string "KeyboardShortcuts" "$INFO_PLIST" 2>/dev/null || true
         plutil -replace NSPrincipalClass -string "KeyboardShortcutsBundle" "$INFO_PLIST" 2>/dev/null || true
     fi
+    
+    # Verify the bundle was copied correctly
+    if [ -d "$RESOURCES/KeyboardShortcuts_KeyboardShortcuts.bundle" ]; then
+        echo "✅ KeyboardShortcuts bundle copied successfully to Resources"
+    else
+        echo "❌ Failed to copy KeyboardShortcuts bundle to Resources"
+    fi
+    
+    if [ -d "$APP_BUNDLE/KeyboardShortcuts_KeyboardShortcuts.bundle" ]; then
+        echo "✅ KeyboardShortcuts bundle copied successfully to app root"
+    else
+        echo "❌ Failed to copy KeyboardShortcuts bundle to app root"
+    fi
 else
     echo "⚠️ Warning: KeyboardShortcuts resources not found in any expected location"
+    echo "Searching for bundle..."
     find .build -name "KeyboardShortcuts_KeyboardShortcuts.bundle" 2>/dev/null
 fi
 
