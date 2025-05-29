@@ -1,0 +1,12 @@
+.wrangler
+node_modules
+.env
+WhisperRecorder-Universal.zip
+WhisperRecorder.app/
+WhisperRecorder
+.build/
+libs/
+AppIcon.icns
+cf_src
+wrangler.toml
+www
