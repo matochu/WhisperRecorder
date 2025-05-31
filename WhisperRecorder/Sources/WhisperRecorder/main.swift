@@ -5,97 +5,6 @@ import Foundation
 import KeyboardShortcuts
 import SwiftUI
 
-// Function to get current memory usage
-func getMemoryUsage() -> UInt64 {
-    var taskInfo = task_vm_info_data_t()
-    var count = mach_msg_type_number_t(MemoryLayout<task_vm_info_data_t>.size) / 4
-    let result: kern_return_t = withUnsafeMutablePointer(to: &taskInfo) {
-        $0.withMemoryRebound(to: integer_t.self, capacity: Int(count)) {
-            task_info(mach_task_self_, task_flavor_t(TASK_VM_INFO), $0, &count)
-        }
-    }
-
-    if result == KERN_SUCCESS {
-        return taskInfo.phys_footprint
-    }
-    return 0
-}
-
-// Format bytes to human-readable format
-func formatMemorySize(_ bytes: UInt64) -> String {
-    let formatter = ByteCountFormatter()
-    formatter.allowedUnits = [.useKB, .useMB]
-    formatter.countStyle = .memory
-    return formatter.string(fromByteCount: Int64(bytes))
-}
-
-// Add global log file path function
-func getLogFilePath() -> URL {
-    let documentsDirectory = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[
-        0]
-
-    // If running from app bundle, use the app's container directory
-    if ProcessInfo.processInfo.environment["WHISPER_APP_BUNDLE"] != nil {
-        let applicationSupport = FileManager.default.urls(
-            for: .applicationSupportDirectory, in: .userDomainMask)[0]
-        let appSupportPath = applicationSupport.appendingPathComponent("WhisperRecorder")
-
-        do {
-            try FileManager.default.createDirectory(
-                at: appSupportPath, withIntermediateDirectories: true)
-            return appSupportPath.appendingPathComponent("whisperrecorder_debug.log")
-        } catch {
-            // Fall back to documents directory
-            print("Failed to create app support directory: \(error)")
-        }
-    }
-
-    return documentsDirectory.appendingPathComponent("whisperrecorder_debug.log")
-}
-
-// Add global log function
-func writeLog(_ message: String) {
-    let logFileURL = getLogFilePath()
-    let formattedMessage = "[\(Date())] \(message)\n"
-
-    if let data = formattedMessage.data(using: .utf8) {
-        if FileManager.default.fileExists(atPath: logFileURL.path) {
-            if let fileHandle = try? FileHandle(forWritingTo: logFileURL) {
-                fileHandle.seekToEndOfFile()
-                fileHandle.write(data)
-                fileHandle.closeFile()
-            }
-        } else {
-            try? data.write(to: logFileURL)
-        }
-    }
-
-    // Also print to console
-    print(message)
-}
-
-// Write startup information
-writeLog("=====================================================")
-writeLog("WhisperRecorder starting")
-writeLog("Log file: \(getLogFilePath().path)")
-writeLog("Bundle ID: \(Bundle.main.bundleIdentifier ?? "unknown")")
-writeLog("Resource path: \(Bundle.main.resourcePath ?? "unknown")")
-writeLog("Frameworks path: \(Bundle.main.privateFrameworksPath ?? "unknown")")
-writeLog(
-    "Running as app bundle: \(ProcessInfo.processInfo.environment["WHISPER_APP_BUNDLE"] != nil)")
-
-if let resourcesPath = ProcessInfo.processInfo.environment["WHISPER_RESOURCES_PATH"] {
-    writeLog("Custom resources path: \(resourcesPath)")
-}
-
-if let libraryPath = ProcessInfo.processInfo.environment["DYLD_LIBRARY_PATH"] {
-    writeLog("DYLD_LIBRARY_PATH: \(libraryPath)")
-}
-
-if let insertLibraries = ProcessInfo.processInfo.environment["DYLD_INSERT_LIBRARIES"] {
-    writeLog("DYLD_INSERT_LIBRARIES: \(insertLibraries)")
-}
-
 extension KeyboardShortcuts.Name {
     static let toggleRecording = Self("toggleRecording")
 }
@@ -106,10 +15,33 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     var popover: NSPopover?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
-        writeLog("Application did finish launching")
+        // Initialize debug manager first
+        _ = DebugManager.shared
+        
+        // Log startup information using new debug system
+        logInfo(.system, "=====================================================")
+        logInfo(.system, "WhisperRecorder starting")
+        logInfo(.system, "Bundle ID: \(Bundle.main.bundleIdentifier ?? "unknown")")
+        logInfo(.system, "Resource path: \(Bundle.main.resourcePath ?? "unknown")")
+        logInfo(.system, "Frameworks path: \(Bundle.main.privateFrameworksPath ?? "unknown")")
+        logInfo(.system, "Running as app bundle: \(ProcessInfo.processInfo.environment["WHISPER_APP_BUNDLE"] != nil)")
+
+        if let resourcesPath = ProcessInfo.processInfo.environment["WHISPER_RESOURCES_PATH"] {
+            logInfo(.system, "Custom resources path: \(resourcesPath)")
+        }
+
+        if let libraryPath = ProcessInfo.processInfo.environment["DYLD_LIBRARY_PATH"] {
+            logDebug(.system, "DYLD_LIBRARY_PATH: \(libraryPath)")
+        }
+
+        if let insertLibraries = ProcessInfo.processInfo.environment["DYLD_INSERT_LIBRARIES"] {
+            logDebug(.system, "DYLD_INSERT_LIBRARIES: \(insertLibraries)")
+        }
+
+        logInfo(.system, "Application did finish launching")
 
         // Check for updates
-        writeLog("Checking for updates")
+        logInfo(.system, "Checking for updates")
         AutoUpdater.shared.onUpdateStatusChanged = {
             DispatchQueue.main.async {
                 if let popover = self.popover, popover.isShown {
@@ -122,54 +54,54 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
         // Check bundle resources
         if let bundlePath = Bundle.main.resourcePath {
-            writeLog("Bundle resource path: \(bundlePath)")
+            logDebug(.system, "Bundle resource path: \(bundlePath)")
             let fileManager = FileManager.default
             if let contents = try? fileManager.contentsOfDirectory(atPath: bundlePath) {
-                writeLog("Bundle resources: \(contents.joined(separator: ", "))")
+                logDebug(.system, "Bundle resources: \(contents.joined(separator: ", "))")
             } else {
-                writeLog("Failed to list bundle resources")
+                logWarning(.system, "Failed to list bundle resources")
             }
         }
 
         // Check frameworks directory
         if let bundlePath = Bundle.main.privateFrameworksPath {
-            writeLog("Bundle frameworks path: \(bundlePath)")
+            logDebug(.system, "Bundle frameworks path: \(bundlePath)")
             let fileManager = FileManager.default
             if let contents = try? fileManager.contentsOfDirectory(atPath: bundlePath) {
-                writeLog("Bundle frameworks: \(contents.joined(separator: ", "))")
+                logDebug(.system, "Bundle frameworks: \(contents.joined(separator: ", "))")
             } else {
-                writeLog("Failed to list bundle frameworks")
+                logWarning(.system, "Failed to list bundle frameworks")
             }
         }
 
         // Set up default keyboard shortcut
-        writeLog("Setting up keyboard shortcut")
+        logInfo(.system, "Setting up keyboard shortcut")
         KeyboardShortcuts.onKeyDown(for: .toggleRecording) { [self] in
-            writeLog("Keyboard shortcut triggered")
+            logDebug(.ui, "Keyboard shortcut triggered")
             audioRecorder.toggleRecording()
         }
 
         if KeyboardShortcuts.getShortcut(for: .toggleRecording) == nil {
-            writeLog("Setting default keyboard shortcut")
+            logInfo(.system, "Setting default keyboard shortcut")
             KeyboardShortcuts.setShortcut(
                 .init(.r, modifiers: [.command, .shift]), for: .toggleRecording)
         }
 
         // Handle status updates
-        writeLog("Setting up status update handler")
+        logInfo(.ui, "Setting up status update handler")
         audioRecorder.onStatusUpdate = {
             self.updateMenuBar()
         }
 
         // Make app not appear in dock
-        writeLog("Setting activation policy")
+        logInfo(.system, "Setting activation policy")
         // NSApp.setActivationPolicy(.accessory)
-        writeLog("NOT setting accessory policy - app will appear in dock for debugging")
+        logWarning(.system, "NOT setting accessory policy - app will appear in dock for debugging")
 
         // Set up status item in the menu bar
-        writeLog("Setting up menu bar")
+        logInfo(.ui, "Setting up menu bar")
         setupMenuBar()
-        writeLog("Application startup complete")
+        logInfo(.system, "Application startup complete")
 
         let mainMenu = NSMenu()
 
@@ -187,37 +119,37 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationWillTerminate(_ notification: Notification) {
-        writeLog("Application will terminate - performing emergency audio restore")
+        logWarning(.system, "Application will terminate - performing emergency audio restore")
         SystemAudioManager.shared.emergencyRestore()
     }
 
     private func setupMenuBar() {
-        writeLog("Creating status item")
+        logDebug(.ui, "Creating status item")
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
 
         if let button = statusItem?.button {
-            writeLog("Configuring status item button")
+            logDebug(.ui, "Configuring status item button")
             button.image = createCompatibleImage(
                 systemSymbol: "waveform.circle",
                 accessibilityDescription: "WhisperRecorder")
             button.action = #selector(togglePopover(_:))
             button.target = self
         } else {
-            writeLog("Failed to get status item button")
+            logWarning(.ui, "Failed to get status item button")
         }
 
         // Create popover
-        writeLog("Creating popover")
+        logDebug(.ui, "Creating popover")
         popover = NSPopover()
-        popover?.contentSize = NSSize(width: 300, height: 300)
+        popover?.contentSize = NSSize(width: 340, height: 400)  // Updated size for card design
         popover?.behavior = .transient
         popover?.contentViewController = NSHostingController(
-            rootView: PopoverView(audioRecorder: audioRecorder))
-        writeLog("Menu bar setup complete")
+            rootView: NewPopoverView(audioRecorder: audioRecorder))  // Use new card-based view
+        logDebug(.ui, "Menu bar setup complete")
     }
 
     @objc func togglePopover(_ sender: AnyObject) {
-        writeLog("Toggle popover called")
+        logDebug(.ui, "Toggle popover called")
         if let button = statusItem?.button {
             if popover?.isShown == true {
                 popover?.performClose(sender)
@@ -229,7 +161,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func updateMenuBar() {
-        writeLog("Updating menu bar")
+        logDebug(.ui, "Updating menu bar")
         DispatchQueue.main.async {
             if let button = self.statusItem?.button {
                 switch self.audioRecorder.statusDescription {
@@ -268,7 +200,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             // If popover is open, update it
             if let popover = self.popover, popover.isShown {
                 popover.contentViewController = NSHostingController(
-                    rootView: PopoverView(audioRecorder: self.audioRecorder))
+                    rootView: NewPopoverView(audioRecorder: self.audioRecorder))  // Use new card-based view
             }
         }
     }
@@ -487,7 +419,7 @@ struct PopoverView: View {
                 .pickerStyle(PopUpButtonPickerStyle())
                 .onChange(of: selectedWritingStyleIndex) { newValue in
                     audioRecorder.selectedWritingStyle = WritingStyle.styles[newValue]
-                    writeLog("Selected writing style: \(audioRecorder.selectedWritingStyle.name)")
+                    logDebug(.ui, "Selected writing style: \(audioRecorder.selectedWritingStyle.name)")
                 }
 
                 // Add language selection
@@ -505,9 +437,7 @@ struct PopoverView: View {
                 .pickerStyle(PopUpButtonPickerStyle())
                 .onChange(of: selectedLanguageCode) { newValue in
                     WritingStyleManager.shared.setTargetLanguage(newValue)
-                    writeLog(
-                        "Selected target language: \(WritingStyleManager.supportedLanguages[newValue] ?? newValue)"
-                    )
+                    logDebug(.ui, "Selected target language: \(WritingStyleManager.supportedLanguages[newValue] ?? newValue)")
                 }
             }
             .padding(.bottom, 5)
@@ -671,9 +601,7 @@ extension AppDelegate {
 }
 
 // Main entry point
-writeLog("Application starting")
 let app = NSApplication.shared
 let delegate = AppDelegate()
 app.delegate = delegate
-writeLog("Running application main loop")
 app.run()

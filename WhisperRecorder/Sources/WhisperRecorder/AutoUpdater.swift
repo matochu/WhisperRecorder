@@ -66,30 +66,30 @@ class AutoUpdater: NSObject {
     func checkForUpdates(force: Bool = false) {
         // Get current app version
         let currentVersion = getCurrentAppVersion()
-        writeLog("Current app version: \(currentVersion)")
+        logInfo(.system, "Current app version: \(currentVersion)")
 
         // Check if we need to check for updates based on last check date
-        let lastCheckDate = UserDefaults.standard.object(forKey: userDefaultsLastCheckKey) as? Date
         let calendar = Calendar.current
         let now = Date()
+        let lastCheckDate = UserDefaults.standard.object(forKey: userDefaultsLastCheckKey) as? Date
 
         // Only check once per day unless forced
         if !force, let lastCheck = lastCheckDate, calendar.isDateInToday(lastCheck) {
-            writeLog("Already checked for updates today. Skipping.")
+            logInfo(.system, "Already checked for updates today. Skipping.")
             return
         }
 
-        // Update the last check date
+        // Save current check date
         UserDefaults.standard.set(now, forKey: userDefaultsLastCheckKey)
-
-        // Start checking for updates
-        isCheckingForUpdates = true
-        onUpdateStatusChanged?()
-        writeLog("Checking for updates...")
+        DispatchQueue.main.async {
+            self.isCheckingForUpdates = true
+            self.onUpdateStatusChanged?()
+        }
+        logInfo(.system, "Checking for updates...")
 
         // Create URL request
         guard let url = URL(string: updateInfoURL) else {
-            writeLog("Invalid update URL")
+            logError(.system, "Invalid update URL")
             isCheckingForUpdates = false
             onUpdateStatusChanged?()
             return
@@ -106,12 +106,12 @@ class AutoUpdater: NSObject {
             }
 
             if let error = error {
-                writeLog("Error checking for updates: \(error.localizedDescription)")
+                logError(.system, "Error checking for updates: \(error.localizedDescription)")
                 return
             }
 
             guard let data = data, let updateInfo = String(data: data, encoding: .utf8) else {
-                writeLog("Could not parse update information")
+                logError(.system, "Could not parse update information")
                 return
             }
 
@@ -120,7 +120,7 @@ class AutoUpdater: NSObject {
             let components = updateInfo.trimmingCharacters(in: .whitespacesAndNewlines).components(
                 separatedBy: " ")
             guard components.count >= 3 else {
-                writeLog("Invalid update info format: \(updateInfo)")
+                logError(.system, "Invalid update info format: \(updateInfo)")
                 return
             }
 
@@ -128,7 +128,7 @@ class AutoUpdater: NSObject {
             let newFileName = components[1]
             let newVersion = components[2]
 
-            writeLog(
+            logInfo(.system,
                 "Found update info - URL: \(newUpdateURL), Filename: \(newFileName), Version: \(newVersion)"
             )
 
@@ -136,7 +136,7 @@ class AutoUpdater: NSObject {
             guard let currentSemVer = SemanticVersion(versionString: currentVersion),
                 let newSemVer = SemanticVersion(versionString: newVersion)
             else {
-                writeLog(
+                logError(.system,
                     "Error: Invalid version format. Current: \(currentVersion), New: \(newVersion)")
                 return
             }
@@ -147,9 +147,9 @@ class AutoUpdater: NSObject {
             self.updateFileName = newFileName
 
             if self.updateAvailable {
-                writeLog("Update available: \(newVersion) (current: \(currentVersion))")
+                logInfo(.system, "Update available: \(newVersion) (current: \(currentVersion))")
             } else {
-                writeLog("No update available, current version (\(currentVersion)) is up to date")
+                logInfo(.system, "No update available, current version (\(currentVersion)) is up to date")
             }
         }
 
@@ -158,14 +158,14 @@ class AutoUpdater: NSObject {
 
     func downloadAndInstallUpdate() {
         guard updateAvailable, !updateURL.isEmpty else {
-            writeLog("No update available to download")
+            logError(.system, "No update available to download")
             return
         }
 
         isDownloadingUpdate = true
         downloadProgress = 0.0
         onUpdateStatusChanged?()
-        writeLog("Starting update download from \(updateURL)")
+        logInfo(.system, "Starting update download from \(updateURL)")
 
         // Handle Google Drive URLs
         var finalURL = updateURL
@@ -177,7 +177,7 @@ class AutoUpdater: NSObject {
         }
 
         guard let url = URL(string: finalURL) else {
-            writeLog("Invalid download URL")
+            logError(.system, "Invalid download URL")
             isDownloadingUpdate = false
             onUpdateStatusChanged?()
             return
@@ -208,12 +208,12 @@ class AutoUpdater: NSObject {
                 self.onUpdateStatusChanged?()
 
                 if let error = error {
-                    writeLog("Error downloading update: \(error.localizedDescription)")
+                    logError(.system, "Error downloading update: \(error.localizedDescription)")
                     return
                 }
 
                 guard let tempURL = tempURL else {
-                    writeLog("No downloaded file URL")
+                    logError(.system, "No downloaded file URL")
                     return
                 }
 
@@ -228,7 +228,7 @@ class AutoUpdater: NSObject {
 
                         // Move file to destination
                         try localFileManager.moveItem(at: tempURL, to: localDestinationURL)
-                        writeLog("Update downloaded to \(localDestinationURL.path)")
+                        logInfo(.system, "Update downloaded to \(localDestinationURL.path)")
 
                         // If it's a zip file, unzip it
                         if localDestinationURL.pathExtension.lowercased() == "zip" {
@@ -236,10 +236,10 @@ class AutoUpdater: NSObject {
                                 self.unzipAndInstallUpdate(zipFile: localDestinationURL)
                             }
                         } else {
-                            writeLog("Downloaded file is not a zip archive")
+                            logInfo(.system, "Downloaded file is not a zip archive")
                         }
                     } catch {
-                        writeLog("Error saving downloaded file: \(error.localizedDescription)")
+                        logError(.system, "Error saving downloaded file: \(error.localizedDescription)")
                     }
                 }
             }
@@ -249,11 +249,11 @@ class AutoUpdater: NSObject {
     }
 
     private func unzipAndInstallUpdate(zipFile: URL) {
-        writeLog("Unzipping update file: \(zipFile.path)")
+        logInfo(.system, "Unzipping update file: \(zipFile.path)")
 
         // Get the current app path
         let currentAppPath = Bundle.main.bundleURL.path
-        writeLog("Current app path: \(currentAppPath)")
+        logInfo(.system, "Current app path: \(currentAppPath)")
 
         // Create a temporary directory for unzipping
         let fileManager = FileManager.default
@@ -272,7 +272,7 @@ class AutoUpdater: NSObject {
             process.waitUntilExit()
 
             if process.terminationStatus == 0 {
-                writeLog("Successfully unzipped update file")
+                logInfo(.system, "Successfully unzipped update file")
 
                 // Find the .app file in the unzipped directory
                 if let contents = try? fileManager.contentsOfDirectory(
@@ -281,22 +281,22 @@ class AutoUpdater: NSObject {
                     let appFiles = contents.filter { $0.pathExtension.lowercased() == "app" }
 
                     if let appFile = appFiles.first {
-                        writeLog("Found app file: \(appFile.path)")
+                        logInfo(.system, "Found app file: \(appFile.path)")
                         installUpdate(from: appFile, currentAppPath: currentAppPath)
                     } else {
-                        writeLog("No .app file found in the unzipped update")
+                        logInfo(.system, "No .app file found in the unzipped update")
                     }
                 }
             } else {
-                writeLog("Failed to unzip update file, status: \(process.terminationStatus)")
+                logInfo(.system, "Failed to unzip update file, status: \(process.terminationStatus)")
             }
         } catch {
-            writeLog("Error running unzip: \(error.localizedDescription)")
+            logError(.system, "Error running unzip: \(error.localizedDescription)")
         }
     }
 
     private func installUpdate(from newAppURL: URL, currentAppPath: String) {
-        writeLog("Installing update from \(newAppURL.path) to \(currentAppPath)")
+        logInfo(.system, "Installing update from \(newAppURL.path) to \(currentAppPath)")
 
         // Save the new version number
         UserDefaults.standard.set(latestVersion, forKey: userDefaultsCurrentVersionKey)
@@ -314,7 +314,7 @@ class AutoUpdater: NSObject {
 
         if response == .alertFirstButtonReturn {
             // User clicked "Install and Restart"
-            writeLog("User approved update installation")
+            logInfo(.system, "User approved update installation")
 
             // Create a script to execute after app quits
             let fileManager = FileManager.default
@@ -351,13 +351,13 @@ class AutoUpdater: NSObject {
                 try process.run()
 
                 // Quit the app
-                writeLog("Quitting app for update installation")
+                logInfo(.system, "Quitting app for update installation")
                 NSApplication.shared.terminate(nil)
             } catch {
-                writeLog("Error creating update script: \(error.localizedDescription)")
+                logError(.system, "Error creating update script: \(error.localizedDescription)")
             }
         } else {
-            writeLog("User postponed update installation")
+            logInfo(.system, "User postponed update installation")
         }
     }
 

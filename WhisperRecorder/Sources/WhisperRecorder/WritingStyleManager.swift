@@ -26,6 +26,12 @@ class WritingStyleManager {
     private var apiKey: String?
     private var targetLanguage: String?
     public var noTranslate = "aa_no-translate"
+    private var apiURL: String {
+        guard let apiKey = self.apiKey else {
+            return "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent"
+        }
+        return "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=\(apiKey)"
+    }
 
     static let supportedLanguages = [
         "aa_no-translate": "No Translation",
@@ -50,50 +56,18 @@ class WritingStyleManager {
         "vi": "Vietnamese",
     ]
 
-    // Debug file path for detailed logging
-    private let debugLogPath = FileManager.default.homeDirectoryForCurrentUser
-        .appendingPathComponent(
-            "Library/Application Support/WhisperRecorder/whisperrecorder_debug.log")
-
     private init() {
-        createDebugLogDirectoryIfNeeded()
-        writeDebugLog("WritingStyleManager initializing...")
+        logInfo(.llm, "WritingStyleManager initializing...")
         loadApiKey()
     }
 
-    private func createDebugLogDirectoryIfNeeded() {
-        let directory = debugLogPath.deletingLastPathComponent()
-        try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-    }
-
-    private func writeDebugLog(_ message: String) {
-        let timestamp = ISO8601DateFormatter().string(from: Date())
-        let logMessage = "[\(timestamp)] \(message)\n"
-
-        // Write to file
-        if let data = logMessage.data(using: .utf8) {
-            if FileManager.default.fileExists(atPath: debugLogPath.path) {
-                if let fileHandle = try? FileHandle(forWritingTo: debugLogPath) {
-                    fileHandle.seekToEndOfFile()
-                    fileHandle.write(data)
-                    fileHandle.closeFile()
-                }
-            } else {
-                try? data.write(to: debugLogPath, options: .atomic)
-            }
-        }
-
-        // Also write to standard app log
-        writeLog(message)
-    }
-
     private func loadApiKey() {
-        writeDebugLog("Starting to load API key...")
+        logDebug(.llm, "Starting to load API key...")
 
         // Load from environment first
         if let key = ProcessInfo.processInfo.environment["GEMINI_API_KEY"] {
             self.apiKey = key
-            writeDebugLog("✅ Loaded Gemini API key from environment")
+            logInfo(.llm, "✅ Loaded Gemini API key from environment")
             return
         }
 
@@ -119,22 +93,22 @@ class WritingStyleManager {
                 .appendingPathComponent("Library/Application Support/WhisperRecorder/.env").path,
         ].compactMap { $0 }
 
-        writeDebugLog("Checking for .env file in the following locations:")
+        logDebug(.llm, "Checking for .env file in the following locations:")
 
         for location in possibleLocations {
-            writeDebugLog("  - Checking: \(location)")
+            logTrace(.llm, "  - Checking: \(location)")
             if fileManager.fileExists(atPath: location) {
-                writeDebugLog("  ✓ Found .env file at: \(location)")
+                logDebug(.llm, "  ✓ Found .env file at: \(location)")
                 if loadApiKeyFromFile(at: location) {
-                    writeDebugLog("  ✅ Successfully loaded API key from \(location)")
+                    logInfo(.llm, "  ✅ Successfully loaded API key from \(location)")
                     return
                 } else {
-                    writeDebugLog("  ✗ Failed to load API key from \(location)")
+                    logWarning(.llm, "  ✗ Failed to load API key from \(location)")
                 }
             }
         }
 
-        writeDebugLog("❌ Could not locate .env file with valid Gemini API key in any location")
+        logWarning(.llm, "❌ Could not locate .env file with valid Gemini API key in any location")
     }
 
     private func loadApiKeyFromFile(at path: String) -> Bool {
@@ -153,10 +127,10 @@ class WritingStyleManager {
                 }
             }
 
-            writeDebugLog("No valid Gemini API key found in file at \(path)")
+            logWarning(.llm, "No valid Gemini API key found in file at \(path)")
             return false
         } catch {
-            writeDebugLog("Error reading .env file at \(path): \(error)")
+            logError(.llm, "Error reading .env file at \(path): \(error)")
             return false
         }
     }
@@ -167,64 +141,98 @@ class WritingStyleManager {
 
     func setTargetLanguage(_ code: String) {
         self.targetLanguage = code
-        writeDebugLog("✅ Target language set to: \(code)")
+        logInfo(.llm, "✅ Target language set to: \(code)")
     }
 
     private func translateIfNeeded(_ text: String, completion: @escaping (String?) -> Void) {
-        let targetLang = currentTargetLanguage
-
-        // Skip translation if target language is the same as system language
-        if targetLang == noTranslate {
-            completion(text)
-            return
-        }
-
         guard let apiKey = self.apiKey, !apiKey.isEmpty else {
-            writeDebugLog("❌ No Gemini API key available - skipping translation")
+            logWarning(.llm, "❌ No Gemini API key available - returning original text")
             completion(text)
             return
         }
 
-        let prompt = """
-            Translate the following text into \(WritingStyleManager.supportedLanguages[targetLang] ?? targetLang).
-            Maintain any formatting, tone, and style of the original text.
-            Return the result as a JSON object with this schema: {"reformatted_text": "your translated text here"}
-            Do not include any additional comments or explanations.
+        if currentTargetLanguage == "no_translate" {
+            logDebug(.llm, "No translation requested - using original text")
+            completion(text)
+            return
+        }
 
-            Text to translate:
-            \(text)
-            """
-
+        let sourceLanguage = "detected language" // Let Gemini auto-detect
+        let targetLanguageName = WritingStyleManager.supportedLanguages[currentTargetLanguage] ?? currentTargetLanguage
+        
+        logInfo(.llm, "🌍 Starting translation from \(sourceLanguage) to \(targetLanguageName)")
+        
+        // Create detailed, context-aware translation prompt
+        let prompt = createTranslationPrompt(for: text, from: sourceLanguage, to: targetLanguageName)
+        
         callGeminiAPI(prompt: prompt, apiKey: apiKey) { result in
             if let translatedText = result {
-                // Try to parse the response as JSON first
-                if let jsonData = translatedText.data(using: .utf8),
-                    let json = try? JSONSerialization.jsonObject(with: jsonData) as? [String: Any],
-                    let reformattedText = json["reformatted_text"] as? String
-                {
-                    self.writeDebugLog("✅ Successfully translated text to \(targetLang)")
-                    completion(reformattedText)
-                } else {
-                    // If not JSON, use the raw text
-                    self.writeDebugLog("✅ Successfully translated text to \(targetLang) (raw text)")
-                    completion(translatedText)
-                }
+                logInfo(.llm, "✅ Successfully translated text")
+                logDebug(.llm, "Translated from: \"\(text)\"")
+                logDebug(.llm, "Translated to: \"\(translatedText)\"")
+                completion(translatedText)
             } else {
-                self.writeDebugLog("❌ Failed to translate text - returning original")
+                logWarning(.llm, "❌ Translation failed - returning original text")
                 completion(text)
             }
         }
+    }
+    
+    private func createTranslationPrompt(for text: String, from sourceLanguage: String, to targetLanguage: String) -> String {
+        // Enhanced translation prompt following Gemini best practices
+        let prompt = """
+        You are a professional translator with expertise in natural, contextually accurate translations.
+        
+        TASK: Translate the provided text from \(sourceLanguage) to \(targetLanguage).
+        
+        CONTEXT: This text is from a voice recording that has been transcribed and may contain:
+        - Informal spoken language
+        - Technical terminology
+        - Proper nouns (names, places, brands)
+        - Colloquial expressions
+        
+        REQUIREMENTS:
+        1. Translate naturally - preserve the meaning and tone, not word-for-word
+        2. Keep proper nouns in their original form unless they have established translations
+        3. Maintain the original formatting and structure
+        4. Preserve any technical terms that are commonly used in the target language
+        5. If the text contains multiple sentences, ensure natural flow between them
+        6. Use contemporary, natural language that a native speaker would use
+        
+        FORMAT: Return only the translated text without any explanations, prefixes, or additional commentary.
+        
+        TEXT TO TRANSLATE:
+        \(text)
+        
+        TRANSLATION:
+        """
+        
+        logTrace(.llm, "Created enhanced translation prompt (\(prompt.count) characters)")
+        return prompt
     }
 
     func reformatText(
         _ text: String, withStyle style: WritingStyle, completion: @escaping (String?) -> Void
     ) {
+        logInfo(.llm, "🔄 Starting reformatText pipeline")
+        logDebug(.llm, "Input text: \"\(text)\"")
+        logDebug(.llm, "Selected style: \(style.name) (\(style.id))")
+        logDebug(.llm, "Target language: \(WritingStyleManager.supportedLanguages[currentTargetLanguage] ?? currentTargetLanguage)")
+        
         // Always start with applying the writing style if it's not default
         let applyStyle = { (inputText: String, next: @escaping (String?) -> Void) in
             if style.id == "default" {
+                logDebug(.llm, "Default style selected - skipping style formatting")
                 next(inputText)
             } else {
+                logInfo(.llm, "🎨 Applying writing style: \(style.name)")
                 self.reformatWithGeminiAPI(inputText, style: style) { formattedText in
+                    if let formatted = formattedText {
+                        logInfo(.llm, "✅ Style formatting completed")
+                        logDebug(.llm, "Style-formatted text: \"\(formatted)\"")
+                    } else {
+                        logWarning(.llm, "⚠️ Style formatting failed, using original text")
+                    }
                     next(formattedText ?? inputText)
                 }
             }
@@ -233,7 +241,16 @@ class WritingStyleManager {
         // Then handle translation if needed
         applyStyle(text) { styledText in
             // Ensure we have valid text to translate, use original if style formatting failed
-            self.translateIfNeeded(styledText ?? text, completion: completion)
+            logDebug(.llm, "Proceeding to translation phase with text: \"\(styledText ?? text)\"")
+            self.translateIfNeeded(styledText ?? text) { finalResult in
+                logInfo(.llm, "🏁 ReformatText pipeline complete")
+                if let final = finalResult {
+                    logDebug(.llm, "Final result: \"\(final)\"")
+                } else {
+                    logWarning(.llm, "Pipeline returned nil result")
+                }
+                completion(finalResult)
+            }
         }
     }
 
@@ -242,7 +259,7 @@ class WritingStyleManager {
         _ text: String, style: WritingStyle, completion: @escaping (String?) -> Void
     ) {
         guard let apiKey = self.apiKey, !apiKey.isEmpty else {
-            writeDebugLog("❌ No Gemini API key available - returning original text")
+            logWarning(.llm, "❌ No Gemini API key available - returning original text")
             completion(text)  // Return original text instead of nil
             return
         }
@@ -253,10 +270,10 @@ class WritingStyleManager {
         // Make API call to Gemini
         callGeminiAPI(prompt: prompt, apiKey: apiKey) { result in
             if let formattedText = result {
-                self.writeDebugLog("✅ Successfully reformatted text with style: \(style.id)")
+                logInfo(.llm, "✅ Successfully reformatted text with style: \(style.id)")
                 completion(formattedText)
             } else {
-                self.writeDebugLog("❌ Failed to reformat text - returning original")
+                logWarning(.llm, "❌ Failed to reformat text - returning original")
                 completion(text)  // Return original text on failure
             }
         }
@@ -317,15 +334,21 @@ class WritingStyleManager {
     private func callGeminiAPI(
         prompt: String, apiKey: String, completion: @escaping (String?) -> Void
     ) {
-        let urlString =
-            "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=\(apiKey)"
-        guard let url = URL(string: urlString) else {
-            writeDebugLog("Invalid Gemini API URL")
+        logInfo(.network, "🌐 Starting Gemini API call")
+        logDebug(.network, "API endpoint: \(self.apiURL)")
+        logDebug(.network, "Prompt length: \(prompt.count) characters")
+        logTrace(.network, "Full prompt: \"\(prompt)\"")
+        
+        guard let url = URL(string: self.apiURL) else {
+            logError(.network, "❌ Invalid API URL: \(self.apiURL)")
             completion(nil)
             return
         }
 
-        // Create request body with structured output configuration
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+
         let requestBody: [String: Any] = [
             "contents": [
                 [
@@ -333,134 +356,97 @@ class WritingStyleManager {
                         ["text": prompt]
                     ]
                 ]
-            ],
-            "generationConfig": [
-                "response_mime_type": "application/json"
-            ],
+            ]
         ]
 
-        guard let jsonData = try? JSONSerialization.data(withJSONObject: requestBody) else {
-            writeDebugLog("Failed to serialize request body")
+        do {
+            let jsonData = try JSONSerialization.data(withJSONObject: requestBody)
+            request.httpBody = jsonData
+            
+            logDebug(.network, "Request body size: \(jsonData.count) bytes")
+            logTrace(.network, "Request body: \(String(data: jsonData, encoding: .utf8) ?? "Unable to convert to string")")
+        } catch {
+            logError(.network, "❌ Failed to serialize request body: \(error)")
             completion(nil)
             return
         }
 
-        var request = URLRequest(url: url)
-        request.httpMethod = "POST"
-        request.addValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.httpBody = jsonData
-
-        writeDebugLog("Calling Gemini API to reformat text with structured output...")
-
-        let task = URLSession.shared.dataTask(with: request) { [weak self] data, response, error in
-            guard let self = self else { return }
-
+        startTiming("api_request")
+        
+        let task = URLSession.shared.dataTask(with: request) { data, response, error in
+            let requestTime = endTiming("api_request")
+            
             if let error = error {
-                self.writeDebugLog("Gemini API request error: \(error)")
+                logError(.network, "❌ Network error: \(error.localizedDescription)")
+                logInfo(.performance, "Failed API request took \(String(format: "%.3f", requestTime ?? 0))s")
                 completion(nil)
                 return
             }
 
-            if let httpResponse = response as? HTTPURLResponse {
-                self.writeDebugLog("Gemini API response status: \(httpResponse.statusCode)")
+            guard let httpResponse = response as? HTTPURLResponse else {
+                logError(.network, "❌ Invalid response type")
+                completion(nil)
+                return
             }
+
+            logInfo(.network, "📡 Received HTTP response: \(httpResponse.statusCode)")
+            logInfo(.performance, "API request completed in \(String(format: "%.3f", requestTime ?? 0))s")
 
             guard let data = data else {
-                self.writeDebugLog("No data received from Gemini API")
+                logError(.network, "❌ No data received from API")
                 completion(nil)
                 return
             }
 
-            do {
-                // Log the full response for debugging
-                if let jsonString = String(data: data, encoding: .utf8) {
-                    self.writeDebugLog("Gemini API response: \(jsonString)")
-                }
+            logDebug(.network, "Response data size: \(data.count) bytes")
 
-                // Parse response based on the actual format from Gemini API
-                if let json = try JSONSerialization.jsonObject(with: data) as? [String: Any],
-                    let candidates = json["candidates"] as? [[String: Any]],
-                    let firstCandidate = candidates.first,
-                    let content = firstCandidate["content"] as? [String: Any]
-                {
-                    // For structured output, extract the actual JSON content
-                    if let parts = content["parts"] as? [[String: Any]],
-                        let firstPart = parts.first,
-                        let inlineData = firstPart["inlineData"] as? [String: Any],
-                        let mimeType = inlineData["mimeType"] as? String,
-                        mimeType == "application/json",
-                        let data = inlineData["data"] as? String,
-                        let jsonData = Data(base64Encoded: data)
-                    {
-                        // Try to parse the base64-encoded JSON data
-                        if let formattedJson = try? JSONSerialization.jsonObject(with: jsonData)
-                            as? [String: Any],
-                            let reformattedText = formattedJson["reformatted_text"] as? String
-                        {
-                            self.writeDebugLog(
-                                "Successfully received reformatted text from structured output")
-                            completion(reformattedText)
-                            return
-                        }
-                    }
-
-                    // Fallback to regular text format if structured format isn't found
-                    if let parts = content["parts"] as? [[String: Any]],
-                        let firstPart = parts.first,
-                        let text = firstPart["text"] as? String
-                    {
-                        // Try to manually parse JSON if the response is a JSON string
-                        if text.trimmingCharacters(in: .whitespacesAndNewlines).hasPrefix("{") {
-                            do {
-                                if let textData = text.data(using: .utf8),
-                                    let jsonObj = try JSONSerialization.jsonObject(with: textData)
-                                        as? [String: Any],
-                                    let reformattedText = jsonObj["reformatted_text"] as? String
-                                {
-                                    self.writeDebugLog(
-                                        "Successfully parsed JSON from text response")
-                                    completion(reformattedText)
-                                    return
-                                }
-                            } catch {
-                                self.writeDebugLog("Error parsing JSON from text: \(error)")
-                            }
-                        }
-
-                        // If we can't extract structured data, use the text directly
-                        self.writeDebugLog("Using text response as fallback")
-                        completion(text)
-                        return
-                    }
-                }
-
-                // If we get here, we couldn't parse the response
-                self.writeDebugLog("Failed to parse Gemini API response structure")
-
-                // Try to get error message
-                if let json = try JSONSerialization.jsonObject(with: data) as? [String: Any],
-                    let error = json["error"] as? [String: Any],
-                    let message = error["message"] as? String
-                {
-                    self.writeDebugLog("Gemini API error: \(message)")
-                } else {
-                    self.writeDebugLog(
-                        "Failed to parse Gemini API response: \(String(data: data, encoding: .utf8) ?? "unknown")"
-                    )
+            if httpResponse.statusCode != 200 {
+                logError(.network, "❌ API returned error status: \(httpResponse.statusCode)")
+                if let errorString = String(data: data, encoding: .utf8) {
+                    logError(.network, "Error response: \(errorString)")
                 }
                 completion(nil)
+                return
+            }
+
+            // Parse the response
+            do {
+                if let jsonObject = try JSONSerialization.jsonObject(with: data) as? [String: Any] {
+                    logTrace(.network, "Full API response: \(jsonObject)")
+                    
+                    if let candidates = jsonObject["candidates"] as? [[String: Any]],
+                       let firstCandidate = candidates.first,
+                       let content = firstCandidate["content"] as? [String: Any],
+                       let parts = content["parts"] as? [[String: Any]],
+                       let firstPart = parts.first,
+                       let text = firstPart["text"] as? String {
+                        
+                        logInfo(.network, "✅ Successfully parsed API response")
+                        logDebug(.network, "Response text length: \(text.count) characters")
+                        logDebug(.network, "Response text: \"\(text)\"")
+                        completion(text.trimmingCharacters(in: .whitespacesAndNewlines))
+                    } else {
+                        logError(.network, "❌ Failed to parse API response structure")
+                        logDebug(.network, "Response structure didn't match expected format")
+                        completion(nil)
+                    }
+                } else {
+                    logError(.network, "❌ Failed to parse JSON response")
+                    completion(nil)
+                }
             } catch {
-                self.writeDebugLog("Error parsing Gemini API response: \(error)")
+                logError(.network, "❌ JSON parsing error: \(error)")
                 completion(nil)
             }
         }
 
         task.resume()
+        logDebug(.network, "HTTP request sent, waiting for response...")
     }
 
     func saveApiKey(_ key: String) {
         self.apiKey = key
-        writeDebugLog("✅ New Gemini API key saved")
+        logInfo(.llm, "✅ New Gemini API key saved")
 
         // Save to Application Support directory
         let supportDir = FileManager.default.homeDirectoryForCurrentUser
@@ -471,9 +457,9 @@ class WritingStyleManager {
             try FileManager.default.createDirectory(
                 at: supportDir, withIntermediateDirectories: true)
             try "GEMINI_API_KEY=\(key)".write(to: keyFile, atomically: true, encoding: .utf8)
-            writeDebugLog("✅ API key saved to \(keyFile.path)")
+            logInfo(.llm, "✅ API key saved to \(keyFile.path)")
         } catch {
-            writeDebugLog("❌ Failed to save API key to file: \(error)")
+            logWarning(.llm, "❌ Failed to save API key to file: \(error)")
         }
     }
 
@@ -487,7 +473,7 @@ class WritingStyleManager {
 
     func deleteApiKey() {
         self.apiKey = nil
-        writeDebugLog("🗑️ Gemini API key deleted from memory")
+        logInfo(.llm, "🗑️ Gemini API key deleted from memory")
 
         // Delete from Application Support directory
         let supportDir = FileManager.default.homeDirectoryForCurrentUser
@@ -496,9 +482,9 @@ class WritingStyleManager {
 
         do {
             try FileManager.default.removeItem(at: keyFile)
-            writeDebugLog("✅ API key file deleted from \(keyFile.path)")
+            logInfo(.llm, "✅ API key file deleted from \(keyFile.path)")
         } catch {
-            writeDebugLog("❌ Failed to delete API key file: \(error)")
+            logWarning(.llm, "❌ Failed to delete API key file: \(error)")
         }
     }
 
