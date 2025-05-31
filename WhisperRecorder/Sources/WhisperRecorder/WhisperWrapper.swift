@@ -484,4 +484,59 @@ class WhisperWrapper {
     var needsModelDownload: Bool {
         return wrapper == nil || !whisper_wrapper_is_loaded(wrapper)
     }
+
+    // MARK: - Model Management Functions
+    
+    /// Check if a specific model is downloaded
+    func isModelDownloaded(_ model: WhisperModel) -> Bool {
+        let appSupportPath = getAppSupportDirectory()
+        let modelPath = appSupportPath.appendingPathComponent(model.filename).path
+        return FileManager.default.fileExists(atPath: modelPath)
+    }
+    
+    /// Get the file size of a downloaded model
+    func getModelFileSize(_ model: WhisperModel) -> UInt64? {
+        let appSupportPath = getAppSupportDirectory()
+        let modelPath = appSupportPath.appendingPathComponent(model.filename).path
+        
+        do {
+            let attributes = try FileManager.default.attributesOfItem(atPath: modelPath)
+            return attributes[.size] as? UInt64
+        } catch {
+            return nil
+        }
+    }
+    
+    /// Delete a downloaded model
+    func deleteModel(_ model: WhisperModel, completion: @escaping (Bool) -> Void) {
+        let appSupportPath = getAppSupportDirectory()
+        let modelPath = appSupportPath.appendingPathComponent(model.filename).path
+        
+        // Check if trying to delete the currently loaded model
+        if model.id == currentModel.id && isModelLoaded() {
+            logWarning(.storage, "Cannot delete currently loaded model: \(model.displayName)")
+            completion(false)
+            return
+        }
+        
+        // Delete the model file
+        do {
+            if FileManager.default.fileExists(atPath: modelPath) {
+                try FileManager.default.removeItem(atPath: modelPath)
+                logInfo(.storage, "Successfully deleted model: \(model.displayName)")
+                completion(true)
+            } else {
+                logWarning(.storage, "Model file not found for deletion: \(model.displayName)")
+                completion(false)
+            }
+        } catch {
+            logError(.storage, "Failed to delete model \(model.displayName): \(error)")
+            completion(false)
+        }
+    }
+    
+    /// Get list of downloaded models
+    func getDownloadedModels() -> [WhisperModel] {
+        return WhisperWrapper.availableModels.filter { isModelDownloaded($0) }
+    }
 }
