@@ -179,16 +179,18 @@ struct ConfigurationCard: View {
                         .buttonStyle(PlainButtonStyle())
                         .help(autoPasteTooltip)
                         
-                        // Manual permissions check button
-                        Button(action: {
-                            AudioRecorder.shared.updateAccessibilityPermissionStatus()
-                        }) {
-                            Image(systemName: "arrow.clockwise")
-                                .font(.system(size: 10))
-                                .foregroundColor(.secondary)
+                        // Manual permissions check button - only show when permissions not granted
+                        if !audioRecorder.accessibilityPermissionsStatus {
+                            Button(action: {
+                                AudioRecorder.shared.updateAccessibilityPermissionStatus()
+                            }) {
+                                Image(systemName: "arrow.clockwise")
+                                    .font(.system(size: 10))
+                                    .foregroundColor(.secondary)
+                            }
+                            .buttonStyle(PlainButtonStyle())
+                            .help("Manually check permissions status")
                         }
-                        .buttonStyle(PlainButtonStyle())
-                        .help("Manually check permissions status")
                     }
                 )
             )

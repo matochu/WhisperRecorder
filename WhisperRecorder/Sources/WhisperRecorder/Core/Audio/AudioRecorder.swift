@@ -19,6 +19,10 @@ class AudioRecorder: ObservableObject {
     // System audio management
     private let systemAudioManager = SystemAudioManager.shared
 
+    // Managers for extracted functionality
+    private let accessibilityManager = AccessibilityManager.shared
+    private let clipboardManager = ClipboardManager.shared
+
     // Sample rate and channel count should match what whisper.cpp expects
     private let sampleRate: Double = 16000.0
     private let channelCount: Int = 1
@@ -32,44 +36,21 @@ class AudioRecorder: ObservableObject {
     @Published var statusDescription: String = "Ready"
     @Published private(set) var recordingDurationSeconds: Int = 0
     private var recordingTimer: Timer?
-    private var isRequestingMicPermission = false  // Add this line
+    private var isRequestingMicPermission = false
 
     // Writing style selection
     @Published var selectedWritingStyle: WritingStyle = WritingStyle.styles[0]  // Default style
     @Published private(set) var isReformattingWithGemini = false
-    @Published var autoPasteEnabled: Bool = true  // Add auto-paste control
 
     // Status update callback
     var onStatusUpdate: (() -> Void)?
 
-    // Accessibility permissions status - reactive property
-    @Published var accessibilityPermissionsStatus: Bool = false
-
-    // Timer for periodic permission checks
-    private var permissionCheckTimer: Timer?
-
-    // Backward compatibility
-    var hasAccessibilityPermissions: Bool {
-        return accessibilityPermissionsStatus
-    }
-
-    // Check if app was launched from terminal/cursor
-    private var isLaunchedFromTerminal: Bool {
-        // Check if parent process is terminal-like
-        let parentPID = getppid()
-        if let parentName = getProcessName(for: parentPID) {
-            let terminalProcesses = ["Terminal", "iTerm", "cursor", "zsh", "bash", "fish"]
-            return terminalProcesses.contains { parentName.lowercased().contains($0.lowercased()) }
-        }
-        return false
-    }
-
-    private func getProcessName(for pid: pid_t) -> String? {
-        var name = [CChar](repeating: 0, count: 4096) // Use fixed size instead of PROC_PIDPATHINFO_MAXSIZE
-        if proc_pidpath(pid, &name, 4096) > 0 {
-            return String(cString: name).components(separatedBy: "/").last
-        }
-        return nil
+    // Delegation to managers
+    var accessibilityPermissionsStatus: Bool { accessibilityManager.accessibilityPermissionsStatus }
+    var hasAccessibilityPermissions: Bool { accessibilityManager.hasAccessibilityPermissions }
+    var autoPasteEnabled: Bool { 
+        get { clipboardManager.autoPasteEnabled }
+        set { clipboardManager.autoPasteEnabled = newValue }
     }
 
     var hasModel: Bool {
@@ -94,21 +75,40 @@ class AudioRecorder: ObservableObject {
             }
         }
 
-        // NOTE: AVAudioEngine and inputNode are NOT initialized here anymore.
-        // They will be lazily initialized by their respective getter methods.
+        // Set up delegation to managers
+        accessibilityManager.onStatusUpdate = { [weak self] in
+            self?.onStatusUpdate?()
+        }
 
-        // Set up permission monitoring
-        logInfo(.system, "Setting up permission monitoring...")
-        setupPermissionMonitoring()
         logInfo(.audio, "AudioRecorder initialization completed")
     }
 
     deinit {
         // Clean up observers and timers
         NotificationCenter.default.removeObserver(self)
-        permissionCheckTimer?.invalidate()
-        permissionCheckTimer = nil
     }
+
+    // MARK: - Accessibility Permissions (Delegated)
+    
+    func checkAccessibilityPermissions() -> Bool {
+        return accessibilityManager.checkAccessibilityPermissions()
+    }
+    
+    func requestAccessibilityPermissions() {
+        accessibilityManager.requestAccessibilityPermissions()
+    }
+    
+    func updateAccessibilityPermissionStatus() {
+        accessibilityManager.updateAccessibilityPermissionStatus()
+    }
+
+    // MARK: - Clipboard Operations (Delegated)
+    
+    private func copyToClipboard(text: String) {
+        clipboardManager.copyToClipboard(text: text)
+    }
+
+    // MARK: - Audio Engine Management
 
     // Getter for audioEngine - initializes on first access
     private func getAudioEngine() -> AVAudioEngine? {
@@ -367,6 +367,10 @@ class AudioRecorder: ObservableObject {
 
     private func actuallyStartRecording() {
         logInfo(.audio, "Actually starting recording")
+        
+        // Hide any existing toast when starting new recording
+        ToastManager.shared.hideToastForNewRecording()
+        
         // Reset audio buffer
         audioBuffer = []
         recordingDurationSeconds = 0
@@ -592,253 +596,6 @@ class AudioRecorder: ObservableObject {
                     self.statusDescription = "Ready"
                     self.onStatusUpdate?()
                 }
-            }
-        }
-    }
-
-    private func copyToClipboard(text: String) {
-        logInfo(.audio, "🔄 Starting clipboard sequence...")
-        
-        let originalText = AppDelegate.lastOriginalWhisperText
-        let processedText = text
-        
-        logDebug(.audio, "Original text: \(originalText.isEmpty ? "empty" : "\(originalText.count) chars")")
-        logDebug(.audio, "Processed text: \(processedText.isEmpty ? "empty" : "\(processedText.count) chars")")
-        
-        // If we have processing (translation/style), only copy the final result
-        // Only copy both if processing failed and we're falling back to original
-        let needsProcessing = self.selectedWritingStyle.id != "default" || 
-                             WritingStyleManager.shared.currentTargetLanguage != WritingStyleManager.shared.noTranslate
-        
-        if needsProcessing && !processedText.isEmpty && processedText != originalText {
-            // We have successful processing - only copy the processed text
-            logInfo(.audio, "📄 Using processed text only (translation/style applied)")
-            self.copyTextToClipboard(processedText, label: "processed")
-        } else if !originalText.isEmpty {
-            // No processing or processing failed - copy original only
-            logInfo(.audio, "📄 Using original text (no processing or fallback)")
-            self.copyTextToClipboard(originalText, label: "original")
-        } else {
-            logWarning(.audio, "❌ No text available to copy")
-        }
-    }
-    
-    private func copyTextToClipboard(_ text: String, label: String) {
-        logInfo(.audio, "📋 Copying \(label) text to clipboard: \"\(text.prefix(50))\(text.count > 50 ? "..." : "")\"")
-        
-        let pasteboard = NSPasteboard.general
-        pasteboard.clearContents()
-        let success = pasteboard.setString(text, forType: .string)
-        
-        if success {
-            logInfo(.audio, "✅ Successfully copied \(label) text (\(text.count) chars)")
-            
-            // Verify what's actually in clipboard
-            if let clipboardContent = pasteboard.string(forType: .string) {
-                logDebug(.audio, "📋 Clipboard verification: \(clipboardContent.count) chars, matches: \(clipboardContent == text)")
-            }
-            
-            // Auto-paste to active input
-            if self.autoPasteEnabled {
-                self.autoPasteToActiveInput()
-            } else {
-                logDebug(.audio, "Auto-paste disabled by user")
-            }
-        } else {
-            logError(.audio, "❌ Failed to copy \(label) text to clipboard")
-        }
-    }
-    
-    private func autoPasteToActiveInput() {
-        // Check if accessibility permissions are enabled
-        guard self.autoPasteEnabled else {
-            logDebug(.audio, "Auto-paste disabled by user")
-            return
-        }
-        
-        // Check accessibility permissions - silently skip if no permissions
-        if !AXIsProcessTrusted() {
-            logInfo(.audio, "❌ Auto-paste skipped - no accessibility permissions")
-            return
-        }
-        
-        // Simply perform paste - try multiple methods with delays
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
-            logInfo(.audio, "🎯 Attempting auto-paste with multiple methods...")
-            self.performPaste()
-        }
-    }
-    
-    private func performPaste() {
-        // Method 1: Try NSApp sendAction
-        logDebug(.audio, "Method 1: NSApp.sendAction")
-        let result1 = NSApp.sendAction(#selector(NSText.paste(_:)), to: nil, from: nil)
-        logDebug(.audio, "NSApp.sendAction result: \(result1)")
-        
-        // Method 2: Try CGEvent immediately
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
-            logDebug(.audio, "Method 2: CGEvent")
-            self.sendPasteKeyEvent()
-        }
-        
-        // Method 3: Try NSApp sendAction to first responder specifically
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
-            logDebug(.audio, "Method 3: Targeted sendAction")
-            if let window = NSApp.keyWindow,
-               let responder = window.firstResponder {
-                logDebug(.audio, "Sending paste to responder: \(type(of: responder))")
-                NSApp.sendAction(#selector(NSText.paste(_:)), to: responder, from: nil)
-            }
-        }
-        
-        // Method 4: Try AppleScript approach
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
-            logDebug(.audio, "Method 4: AppleScript")
-            self.applescriptPaste()
-        }
-    }
-    
-    private func sendPasteKeyEvent() {
-        let source = CGEventSource(stateID: .hidSystemState)
-        
-        // Send Cmd+V with proper timing
-        if let keyDownEvent = CGEvent(keyboardEventSource: source, virtualKey: 9, keyDown: true) {
-            keyDownEvent.flags = .maskCommand
-            keyDownEvent.post(tap: .cghidEventTap)
-            
-            // Small delay before key up
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
-                if let keyUpEvent = CGEvent(keyboardEventSource: source, virtualKey: 9, keyDown: false) {
-                    keyUpEvent.flags = .maskCommand
-                    keyUpEvent.post(tap: .cghidEventTap)
-                    logDebug(.audio, "CGEvent paste sent")
-                }
-            }
-        }
-    }
-    
-    private func applescriptPaste() {
-        let script = """
-        tell application "System Events"
-            keystroke "v" using command down
-        end tell
-        """
-        
-        if let appleScript = NSAppleScript(source: script) {
-            var error: NSDictionary?
-            appleScript.executeAndReturnError(&error)
-            if let error = error {
-                logDebug(.audio, "AppleScript error: \(error)")
-            } else {
-                logDebug(.audio, "AppleScript paste executed")
-            }
-        }
-    }
-
-    // MARK: - Accessibility Permissions
-    
-    func checkAccessibilityPermissions() -> Bool {
-        logInfo(.system, "Checking accessibility permissions...")
-        
-        // Check WITHOUT showing system prompt
-        let accessibilityEnabled = AXIsProcessTrusted()
-        
-        if accessibilityEnabled {
-            logInfo(.system, "✅ Accessibility permissions granted")
-        } else {
-            logWarning(.system, "❌ Accessibility permissions not granted")
-        }
-        
-        return accessibilityEnabled
-    }
-    
-    func requestAccessibilityPermissions() {
-        logInfo(.system, "Requesting accessibility permissions...")
-        
-        // Check if launched from terminal - for terminal launches, open System Preferences directly
-        if isLaunchedFromTerminal {
-            logWarning(.system, "⚠️ App launched from terminal/cursor - opening System Preferences directly")
-            openAccessibilityPreferences()
-            return
-        }
-        
-        // For Finder launches: try to show system dialog
-        logInfo(.system, "📱 App launched from Finder - attempting to show system permissions dialog")
-        let options = [kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true]
-        let accessibilityEnabled = AXIsProcessTrustedWithOptions(options as CFDictionary)
-        
-        if accessibilityEnabled {
-            logInfo(.system, "✅ Accessibility permissions already granted")
-        } else {
-            logInfo(.system, "📝 System permissions dialog should appear for Finder launch")
-            // Don't add fallback for Finder launches - let the system dialog do its work
-        }
-    }
-    
-    private func openAccessibilityPreferences() {
-        logInfo(.system, "Opening System Preferences > Privacy & Security > Accessibility")
-        
-        // URL to open System Preferences to Accessibility section
-        let prefPaneURL = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility")!
-        
-        NSWorkspace.shared.open(prefPaneURL, configuration: NSWorkspace.OpenConfiguration()) { (app, error) in
-            if let error = error {
-                logError(.system, "❌ Failed to open Accessibility preferences: \(error)")
-                
-                // Fallback: open general Security & Privacy
-                let fallbackURL = URL(string: "x-apple.systempreferences:com.apple.preference.security")!
-                NSWorkspace.shared.open(fallbackURL, configuration: NSWorkspace.OpenConfiguration()) { (_, fallbackError) in
-                    if let fallbackError = fallbackError {
-                        logError(.system, "❌ Failed to open Security & Privacy preferences: \(fallbackError)")
-                    } else {
-                        logInfo(.system, "✅ Opened Security & Privacy preferences (general)")
-                    }
-                }
-            } else {
-                logInfo(.system, "✅ Successfully opened Accessibility preferences")
-            }
-        }
-    }
-
-    private func setupPermissionMonitoring() {
-        logInfo(.system, "Setting up permission monitoring...")
-        
-        // Initial status check
-        updateAccessibilityPermissionStatus()
-        
-        // Monitor app focus changes only
-        NotificationCenter.default.addObserver(
-            forName: NSApplication.didBecomeActiveNotification,
-            object: nil,
-            queue: .main
-        ) { [weak self] _ in
-            logDebug(.system, "App became active - checking permissions")
-            self?.updateAccessibilityPermissionStatus()
-        }
-        
-        // Remove periodic timer - only manual checks now
-    }
-    
-    func updateAccessibilityPermissionStatus() {
-        let newStatus = AXIsProcessTrusted()
-        let processName = ProcessInfo.processInfo.processName
-        let bundleId = Bundle.main.bundleIdentifier ?? "unknown"
-        
-        logDebug(.system, "🔍 Permission check: AXIsProcessTrusted() = \(newStatus)")
-        logDebug(.system, "🔍 Process name: \(processName)")
-        logDebug(.system, "🔍 Bundle ID: \(bundleId)")
-        logDebug(.system, "🔍 Current status: \(accessibilityPermissionsStatus)")
-        
-        if newStatus != accessibilityPermissionsStatus {
-            logInfo(.system, "♻️ Accessibility permission status changed: \(accessibilityPermissionsStatus) → \(newStatus)")
-            DispatchQueue.main.async {
-                self.accessibilityPermissionsStatus = newStatus
-                self.onStatusUpdate?()
-            }
-        } else {
-            // Update without logging for routine checks, but force update UI anyway
-            DispatchQueue.main.async {
-                self.accessibilityPermissionsStatus = newStatus
             }
         }
     }
