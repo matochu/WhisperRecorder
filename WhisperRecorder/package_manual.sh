@@ -127,7 +127,7 @@ cat > "$CONTENTS/Info.plist" << EOF
 <plist version="1.0">
 <dict>
     <key>CFBundleExecutable</key>
-    <string>WhisperRecorder</string>
+    <string>WhisperRecorder.bin</string>
     <key>CFBundleIdentifier</key>
     <string>com.whisper.WhisperRecorder</string>
     <key>CFBundleName</key>
@@ -206,16 +206,27 @@ gcc -mmacosx-version-min=12.0 -arch arm64 -o "$MACOS/$APP_NAME" launcher.c
 
 # Fix library paths
 echo "13. Fixing library paths..."
-install_name_tool -add_rpath "@executable_path/../Frameworks" "$MACOS/$APP_NAME.bin"
+if [ "$DEBUG_BUILD" = "1" ]; then
+    echo "   🐛 SKIPPING library path fixes for debug build (to preserve code signing)"
+    echo "   📝 Debug builds will use DYLD_LIBRARY_PATH from launcher script"
+else
+    echo "   🔧 Applying library path fixes for release build..."
+    install_name_tool -add_rpath "@executable_path/../Frameworks" "$MACOS/$APP_NAME.bin"
+fi
 
 echo "14. Updating dylib references..."
-for lib in "$FRAMEWORKS"/*.dylib; do
-    if [ -f "$lib" ]; then
-        basename=$(basename "$lib")
-        echo "   Fixing $basename..."
-        install_name_tool -change "$PWD/libs/$basename" "@rpath/$basename" "$MACOS/$APP_NAME.bin" 2>/dev/null || echo "   (no change needed for $basename)"
-    fi
-done
+if [ "$DEBUG_BUILD" = "1" ]; then
+    echo "   🐛 SKIPPING dylib reference updates for debug build (to preserve code signing)"
+else
+    echo "   🔧 Updating dylib references for release build..."
+    for lib in "$FRAMEWORKS"/*.dylib; do
+        if [ -f "$lib" ]; then
+            basename=$(basename "$lib")
+            echo "   Fixing $basename..."
+            install_name_tool -change "$PWD/libs/$basename" "@rpath/$basename" "$MACOS/$APP_NAME.bin" 2>/dev/null || echo "   (no change needed for $basename)"
+        fi
+    done
+fi
 
 # Clean up
 echo "15. Cleaning up temporary files..."

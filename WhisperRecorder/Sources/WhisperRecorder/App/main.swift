@@ -648,7 +648,8 @@ extension AppDelegate {
         {
             responder.paste(sender)
         } else {
-            NSSound.beep()  // Optional: play a beep if no responder
+            // Removed NSSound.beep() - causes double sound during auto-paste
+            // NSSound.beep()  // Optional: play a beep if no responder
         }
     }
 }
