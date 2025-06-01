@@ -1,15 +1,6 @@
 import SwiftUI
 import KeyboardShortcuts
 
-// MARK: - Popover State Management
-class PopoverState: ObservableObject {
-    @Published var isVisible: Bool = false
-    
-    func setVisible(_ visible: Bool) {
-        isVisible = visible
-    }
-}
-
 // MARK: - Text Storage State 
 extension AppDelegate {
     static var lastOriginalWhisperText: String = ""
@@ -65,7 +56,7 @@ struct CardStyle: ViewModifier {
 }
 
 extension View {
-    func cardStyle(borderColor: Color = Color(.separatorColor), backgroundColor: Color = Color(.controlBackgroundColor).opacity(0.6)) -> some View {
+    func cardStyle(borderColor: Color = Color(.separatorColor), backgroundColor: Color = Color.clear) -> some View {
         self.modifier(CardStyle(borderColor: borderColor, backgroundColor: backgroundColor))
     }
 }
@@ -143,7 +134,7 @@ struct StatusCard: View {
     }
     
     private var statusBackgroundColor: Color {
-        return Color(.controlBackgroundColor).opacity(0.6)
+        return Color.clear
     }
     
     private var recordingDuration: String {
@@ -183,6 +174,9 @@ struct StatusCard: View {
 // MARK: - Actions Card
 struct ActionsCard: View {
     let audioRecorder: AudioRecorder
+    @State private var lastStatus: String = ""
+    @State private var lastOriginalText: String = ""
+    @State private var lastProcessedText: String = ""
     
     var body: some View {
         VStack(spacing: 8) {
@@ -223,10 +217,11 @@ struct ActionsCard: View {
                     }
                     .padding(.horizontal, 8)
                     .padding(.vertical, 4)
-                    .background(Color(.controlColor))
+                    .background(Color.clear)
                     .cornerRadius(4)
                 }
                 .buttonStyle(PlainButtonStyle())
+                .frame(height: 24) // Fixed height to prevent stretching
                 
                 Spacer()
                 
@@ -245,11 +240,40 @@ struct ActionsCard: View {
                     .cornerRadius(4)
                 }
                 .buttonStyle(PlainButtonStyle())
+                .frame(height: 24) // Fixed height to prevent stretching
                 .disabled(!canProcessAgain)
                 .help(processAgainTooltip)
             }
+            .frame(height: 32) // Fixed height for the entire row
         }
         .cardStyle()
+        .onChange(of: audioRecorder.statusDescription) { newStatus in
+            // Refresh when recording status changes
+            if lastStatus != newStatus {
+                lastStatus = newStatus
+                print("📱 Status changed to: \(newStatus)")
+            }
+        }
+        .onChange(of: AppDelegate.lastOriginalWhisperText) { newText in
+            // Refresh when original text changes
+            if lastOriginalText != newText {
+                lastOriginalText = newText
+                print("📝 Original text updated: \(newText.isEmpty ? "empty" : "\(newText.count) chars")")
+            }
+        }
+        .onChange(of: AppDelegate.lastProcessedText) { newText in
+            // Refresh when processed text changes
+            if lastProcessedText != newText {
+                lastProcessedText = newText
+                print("🔄 Processed text updated: \(newText.isEmpty ? "empty" : "\(newText.count) chars")")
+            }
+        }
+        .onAppear {
+            // Initialize state
+            lastStatus = audioRecorder.statusDescription
+            lastOriginalText = AppDelegate.lastOriginalWhisperText
+            lastProcessedText = AppDelegate.lastProcessedText
+        }
     }
     
     private enum TextType {
@@ -257,20 +281,23 @@ struct ActionsCard: View {
     }
     
     private func copyButton(icon: String, title: String, textType: TextType, isPrimary: Bool) -> some View {
-        Button(action: {
+        let isAvailable = hasText(type: textType)
+        let buttonText = isAvailable ? "Copy \(title)" : "No \(title)"
+        
+        return Button(action: {
             copyText(type: textType)
         }) {
-            VStack(spacing: 2) {
+            HStack(spacing: 6) {
                 Text(icon)
-                    .font(.system(size: 16))
-                Text(title)
-                    .font(.system(size: 10, weight: .medium))
+                    .font(.system(size: 14))
+                Text(buttonText)
+                    .font(.system(size: 12, weight: .medium))
             }
             .frame(maxWidth: .infinity)
-            .padding(.horizontal, 8)
-            .padding(.vertical, 6)
-            .background(hasText(type: textType) ? (isPrimary ? Color.blue : Color(.controlAccentColor).opacity(0.8)) : Color(.controlColor).opacity(0.5))
-            .foregroundColor(hasText(type: textType) ? .white : .secondary)
+            .padding(.horizontal, 12)
+            .padding(.vertical, 8)
+            .background(isAvailable ? (isPrimary ? Color.blue : Color(.controlAccentColor).opacity(0.8)) : Color(.controlColor).opacity(0.5))
+            .foregroundColor(isAvailable ? .white : .secondary)
             .cornerRadius(6)
             .overlay(
                 RoundedRectangle(cornerRadius: 6)
@@ -278,8 +305,8 @@ struct ActionsCard: View {
             )
         }
         .buttonStyle(PlainButtonStyle())
-        .disabled(!hasText(type: textType))
-        .help(tooltipText(type: textType)) // macOS tooltip
+        .disabled(!isAvailable)
+        .help(tooltipText(type: textType)) // macOS tooltip with preview
     }
     
     private func tooltipText(type: TextType) -> String {
@@ -302,10 +329,14 @@ struct ActionsCard: View {
     }
     
     private func hasText(type: TextType) -> Bool {
+        let result: Bool
         switch type {
-        case .processed: return AppDelegate.hasProcessedText
-        case .original: return AppDelegate.hasOriginalText
+        case .processed: 
+            result = AppDelegate.hasProcessedText
+        case .original: 
+            result = AppDelegate.hasOriginalText
         }
+        return result
     }
     
     private func copyText(type: TextType) {
@@ -378,7 +409,8 @@ struct ConfigurationCard: View {
     @Binding var selectedLanguageCode: String
     @Binding var inputText: String
     @State private var settingsType: SettingsType? = nil
-    @EnvironmentObject var popoverState: PopoverState
+    @State private var selectedModelIndex = 0
+    @State private var modelRefreshTrigger = false
     
     // Settings panel types
     enum SettingsType {
@@ -485,12 +517,10 @@ struct ConfigurationCard: View {
                 Divider()
                     .padding(.vertical, 4)
                 
-                HStack {
+                HStack(alignment: .top, spacing: 8) {
                     settingsPanel(for: settingsType)
                     
-                    Spacer()
-                    
-                    // Close button
+                    // Close button - fixed position at top right
                     Button(action: {
                         self.settingsType = nil
                     }) {
@@ -499,6 +529,7 @@ struct ConfigurationCard: View {
                             .foregroundColor(.secondary)
                     }
                     .buttonStyle(PlainButtonStyle())
+                    .frame(width: 16, height: 16) // Fixed size
                 }
             }
         }
@@ -510,12 +541,6 @@ struct ConfigurationCard: View {
         .onChange(of: WhisperWrapper.shared.currentModel.id) { _ in
             // Update when current model changes
             updateSelectedModelIndex()
-        }
-        .onChange(of: popoverState.isVisible) { isVisible in
-            // Close settings panel when popover closes
-            if !isVisible {
-                settingsType = nil
-            }
         }
     }
     
@@ -534,9 +559,6 @@ struct ConfigurationCard: View {
             content
         }
     }
-    
-    @State private var selectedModelIndex = 0
-    @State private var refreshTrigger = false
     
     private var modelStatusText: String {
         let currentModel = WhisperWrapper.shared.currentModel
@@ -596,7 +618,7 @@ struct ConfigurationCard: View {
                         WhisperWrapper.shared.switchModel(to: selectedModel) { success in
                             if !success {
                                 WhisperWrapper.shared.downloadCurrentModel { _ in
-                                    refreshTrigger.toggle()
+                                    modelRefreshTrigger.toggle()
                                 }
                             }
                             settingsType = nil
@@ -611,7 +633,7 @@ struct ConfigurationCard: View {
                             Button("Delete") {
                                 WhisperWrapper.shared.deleteModel(selectedModel) { success in
                                     if success {
-                                        refreshTrigger.toggle()
+                                        modelRefreshTrigger.toggle()
                                     }
                                 }
                             }
@@ -627,7 +649,7 @@ struct ConfigurationCard: View {
                 }
             }
         }
-        .onChange(of: refreshTrigger) { _ in
+        .onChange(of: modelRefreshTrigger) { _ in
             // Trigger view refresh
         }
     }

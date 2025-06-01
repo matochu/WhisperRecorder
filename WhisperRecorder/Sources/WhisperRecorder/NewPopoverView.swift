@@ -7,7 +7,6 @@ struct NewPopoverView: View {
     @State private var selectedWritingStyleIndex = 0
     @State private var inputText: String = ""
     @State private var selectedLanguageCode: String
-    @StateObject private var popoverState = PopoverState()
 
     // Timer for updating memory usage
     let memoryTimer = Timer.publish(every: 2, on: .main, in: .common).autoconnect()
@@ -26,13 +25,10 @@ struct NewPopoverView: View {
             }
         }
         .frame(width: 340)  // Increased from 300px as per design
-        .environmentObject(popoverState)
         .onAppear {
             setupInitialValues()
-            popoverState.setVisible(true)
         }
         .onDisappear {
-            popoverState.setVisible(false)
         }
         .onReceive(memoryTimer) { _ in
             memoryUsage = getMemoryUsage()
@@ -67,7 +63,7 @@ struct NewPopoverView: View {
                         .foregroundColor(.secondary)
                 }
             }
-            .cardStyle(borderColor: .red, backgroundColor: Color(.controlBackgroundColor))
+            .cardStyle(borderColor: .red, backgroundColor: Color.clear)
             
             // Model selection placeholder
             modelSelectionCard
@@ -143,7 +139,7 @@ struct NewPopoverView: View {
                 }
             }
         }
-        .cardStyle(borderColor: .orange, backgroundColor: Color(.controlBackgroundColor))
+        .cardStyle(borderColor: .orange, backgroundColor: Color.clear)
     }
     
     private var modelSelectionCard: some View {
@@ -195,7 +191,7 @@ struct NewPopoverView: View {
                 }
             }
         }
-        .cardStyle(borderColor: .blue, backgroundColor: .white)
+        .cardStyle(borderColor: .blue, backgroundColor: Color.clear)
     }
     
     @State private var selectedModelIndex = 0
