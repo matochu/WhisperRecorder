@@ -10,7 +10,7 @@ struct StatusCard: View {
             // Main status line with Rec button
             HStack {
                 // Only show recording timer when recording
-                HStack(spacing: 8) {
+                HStack(spacing: 4) {
                     if !recordingDuration.isEmpty {
                         Text(recordingDuration)
                             .font(.system(size: 13, weight: .medium))
@@ -44,18 +44,6 @@ struct StatusCard: View {
             statusLine(
                 left: "Memory: \(formatMemorySize(memoryUsage))",
                 right: memoryDelta,
-                isPrimary: false
-            )
-            
-            statusLine(
-                left: "Model: \(WhisperWrapper.shared.currentModel.displayName)",
-                right: modelStatusText,
-                isPrimary: false
-            )
-            
-            statusLine(
-                left: "Target: \(targetLanguage)",
-                right: "Style: \(audioRecorder.selectedWritingStyle.name)",
                 isPrimary: false
             )
         }

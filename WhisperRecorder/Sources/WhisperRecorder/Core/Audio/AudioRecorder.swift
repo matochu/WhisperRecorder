@@ -532,10 +532,14 @@ class AudioRecorder: ObservableObject {
                 // Copy to clipboard
                 DispatchQueue.main.async {
                     self.copyToClipboard(text: transcription)
+                    
                     self.isTranscribing = false
                     self.statusDescription = "Ready"
                     self.onStatusUpdate?()
                     logInfo(.audio, "✅ Transcription pipeline complete (no processing needed)")
+                    
+                    // Play completion sound after entire transcription process is done
+                    NSSound(named: "Tink")?.play()
                 }
                 return
             }
@@ -561,6 +565,17 @@ class AudioRecorder: ObservableObject {
                 let totalTime = endTiming("transcription_pipeline")
                 
                 DispatchQueue.main.async {
+                    // Always reset status to Ready regardless of result
+                    defer {
+                        self.isTranscribing = false
+                        self.isReformattingWithGemini = false
+                        self.statusDescription = "Ready"
+                        self.onStatusUpdate?()
+                        
+                        // Play completion sound after entire transcription process is done
+                        NSSound(named: "Tink")?.play()
+                    }
+                    
                     if let reformattedText = reformattedText {
                         logInfo(.llm, "✅ Gemini processing completed in \(String(format: "%.3f", geminiTime ?? 0))s")
                         logInfo(.llm, "📝 Reformatted output: \"\(reformattedText)\"")
@@ -590,11 +605,24 @@ class AudioRecorder: ObservableObject {
                         
                         logInfo(.audio, "✅ Transcription pipeline complete (fallback to original)")
                     }
-
+                }
+            }
+            
+            // Safety fallback: If callback never gets called, reset state after 30 seconds
+            DispatchQueue.main.asyncAfter(deadline: .now() + 30) {
+                if self.isTranscribing || self.isReformattingWithGemini {
+                    logWarning(.audio, "🚨 Processing timeout - forcefully resetting to Ready state")
                     self.isTranscribing = false
                     self.isReformattingWithGemini = false
                     self.statusDescription = "Ready"
                     self.onStatusUpdate?()
+                    
+                    // Use original transcription as fallback
+                    if self.lastTranscription == nil || self.lastTranscription?.isEmpty == true {
+                        self.lastTranscription = transcription
+                        AppDelegate.lastProcessedText = transcription
+                        self.copyToClipboard(text: transcription)
+                    }
                 }
             }
         }

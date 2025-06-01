@@ -11,6 +11,8 @@ struct ConfigurationCard: View {
     @State private var modelRefreshTrigger = false
     @ObservedObject private var toastManager = ToastManager.shared
     @ObservedObject private var audioRecorder = AudioRecorder.shared
+    @ObservedObject private var writingStyleManager = WritingStyleManager.shared
+    @ObservedObject private var llmManager = LLMManager.shared
     
     // Settings panel types
     enum SettingsType {
@@ -91,21 +93,28 @@ struct ConfigurationCard: View {
             // API Status (clickable to configure)
             configRow(
                 icon: "🔑",
-                label: "API",
+                label: "LLM",
                 content: AnyView(
                     HStack(spacing: 4) {
                         Button(action: {
                             settingsType = settingsType == .api ? nil : .api
                         }) {
                             HStack(spacing: 4) {
-                                Text(WritingStyleManager.shared.hasApiKey() ? "Connected" : "Not Set")
+                                let hasKey = llmManager.hasApiKey()
+                                Text(hasKey ? llmManager.getCurrentModelDisplayName() : "Not Connected")
                                     .font(.system(size: 12))
-                                    .foregroundColor(WritingStyleManager.shared.hasApiKey() ? .green : .orange)
-                                
-                                Image(systemName: "gear")
-                                    .font(.system(size: 10))
-                                    .foregroundColor(.secondary)
+                                    .foregroundColor(llmManager.hasError ? .red : (hasKey ? .green : .red))
                             }
+                        }
+                        .buttonStyle(PlainButtonStyle())
+                        .help(llmManager.hasError ? llmManager.getLastErrorSummary() : "")
+                        
+                        Button(action: {
+                            settingsType = settingsType == .api ? nil : .api
+                        }) {
+                            Image(systemName: "chevron.down")
+                                .font(.system(size: 12))
+                                .foregroundColor(.secondary)
                         }
                         .buttonStyle(PlainButtonStyle())
                     }
@@ -363,55 +372,178 @@ struct ConfigurationCard: View {
     
     private var apiSettingsView: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text("API Configuration")
+            Text("LLM Provider Configuration")
                 .font(.system(size: 11, weight: .medium))
                 .foregroundColor(.secondary)
             
-            VStack(alignment: .leading, spacing: 6) {
-                if WritingStyleManager.shared.hasApiKey() {
-                    HStack {
-                        Text("Token: \(WritingStyleManager.shared.getMaskedApiKey())")
-                            .font(.system(size: 11))
-                            .foregroundColor(.secondary)
-                        
-                        Spacer()
-                        
-                        Button("Change") {
-                            WritingStyleManager.shared.deleteApiKey()
-                            inputText = ""
-                        }
-                        .font(.system(size: 11))
-                        .foregroundColor(.blue)
-                        .buttonStyle(PlainButtonStyle())
-                    }
-                } else {
-                    HStack {
-                        TextField("Enter Gemini API Token", text: $inputText)
-                            .textFieldStyle(RoundedBorderTextFieldStyle())
-                            .font(.system(size: 11))
-                        
-                        Button("Save") {
-                            if !inputText.isEmpty {
-                                WritingStyleManager.shared.saveApiKey(inputText)
-                                inputText = ""
-                                settingsType = nil
+            // Provider Selection
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Current Provider:")
+                    .font(.system(size: 10))
+                    .foregroundColor(.secondary)
+                
+                Picker("Provider", selection: Binding(
+                    get: { llmManager.currentProvider },
+                    set: { llmManager.setCurrentProvider($0) }
+                )) {
+                    ForEach(llmManager.getAllProviders(), id: \.self) { provider in
+                        HStack {
+                            Text("\(provider.icon) \(provider.displayName)")
+                            Spacer()
+                            if llmManager.hasApiKey(for: provider) {
+                                Image(systemName: "checkmark.circle.fill")
+                                    .foregroundColor(.green)
                             }
                         }
-                        .disabled(inputText.isEmpty)
-                        .font(.system(size: 11))
+                        .tag(provider)
+                    }
+                }
+                .pickerStyle(MenuPickerStyle())
+                .labelsHidden()
+            }
+            
+            let currentProvider = llmManager.currentProvider
+            let hasKey = llmManager.hasApiKey(for: currentProvider)
+            
+            // Model Selection for Current Provider
+            if hasKey || !currentProvider.requiresApiKey {
+                Divider()
+                    .padding(.vertical, 4)
+                
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Model Selection:")
+                        .font(.system(size: 10))
+                        .foregroundColor(.secondary)
+                    
+                    Picker("Model", selection: Binding(
+                        get: { 
+                            let currentModel = llmManager.getCurrentModelDisplayName()
+                            return currentModel.isEmpty ? currentProvider.defaultModel : currentModel
+                        },
+                        set: { llmManager.setCurrentModel($0) }
+                    )) {
+                        ForEach(currentProvider.availableModels, id: \.self) { model in
+                            Text(model)
+                                .tag(model)
+                        }
+                    }
+                    .pickerStyle(MenuPickerStyle())
+                    .labelsHidden()
+                    .disabled(!hasKey && currentProvider.requiresApiKey)
+                    
+                    Text("Current: \(llmManager.getCurrentModelDisplayName())")
+                        .font(.system(size: 10))
+                        .foregroundColor(.secondary)
+                }
+            }
+            
+            // API Key Management for Current Provider
+            VStack(alignment: .leading, spacing: 6) {
+                HStack {
+                    Text("\(currentProvider.icon) \(currentProvider.displayName)")
+                        .font(.system(size: 11, weight: .medium))
+                    
+                    Spacer()
+                    
+                    if hasKey {
+                        Text("✅ Connected")
+                            .font(.system(size: 10))
+                            .foregroundColor(.green)
+                    } else {
+                        Text("❌ No Token")
+                            .font(.system(size: 10))
+                            .foregroundColor(.orange)
                     }
                 }
                 
-                Text("Required for AI text enhancement and translation features")
-                    .font(.system(size: 10))
-                    .foregroundColor(.secondary)
-                    .padding(.top, 2)
-                    
-                if !WritingStyleManager.shared.hasApiKey() {
+                if currentProvider.requiresApiKey {
+                    if hasKey {
+                        HStack {
+                            Text("Token: \(llmManager.getMaskedApiKey(for: currentProvider))")
+                                .font(.system(size: 11))
+                                .foregroundColor(.secondary)
+                            
+                            Spacer()
+                            
+                            Button("Change") {
+                                llmManager.deleteApiKey(for: currentProvider)
+                                inputText = ""
+                            }
+                            .font(.system(size: 11))
+                            .foregroundColor(.blue)
+                            .buttonStyle(PlainButtonStyle())
+                        }
+                    } else {
+                        HStack {
+                            TextField("Enter \(currentProvider.displayName) API Token", text: $inputText)
+                                .textFieldStyle(RoundedBorderTextFieldStyle())
+                                .font(.system(size: 11))
+                            
+                            Button("Save") {
+                                if !inputText.isEmpty {
+                                    llmManager.saveApiKey(inputText, for: currentProvider)
+                                    inputText = ""
+                                }
+                            }
+                            .disabled(inputText.isEmpty)
+                            .font(.system(size: 11))
+                        }
+                    }
+                } else {
+                    Text("This provider runs locally and doesn't require an API token")
+                        .font(.system(size: 10))
+                        .foregroundColor(.secondary)
+                        .italic()
+                }
+                
+                // Provider-specific info
+                switch currentProvider {
+                case .gemini:
+                    Text("Get your API key from Google AI Studio (ai.google.dev)")
+                        .font(.system(size: 10))
+                        .foregroundColor(.secondary)
+                case .openai:
+                    Text("Get your API key from OpenAI Platform (platform.openai.com)")
+                        .font(.system(size: 10))
+                        .foregroundColor(.secondary)
+                case .claude:
+                    Text("Get your API key from Anthropic Console (console.anthropic.com)")
+                        .font(.system(size: 10))
+                        .foregroundColor(.secondary)
+                case .ollama:
+                    Text("Make sure Ollama is running locally on port 11434")
+                        .font(.system(size: 10))
+                        .foregroundColor(.secondary)
+                }
+                
+                if !hasKey && currentProvider.requiresApiKey {
                     Text("⚠️ AI features disabled without API token")
                         .font(.system(size: 10))
                         .foregroundColor(.orange)
                         .padding(.top, 2)
+                }
+            }
+            
+            // Summary of all providers
+            if llmManager.getProvidersWithKeys().count > 1 {
+                Divider()
+                    .padding(.vertical, 2)
+                
+                Text("Available Providers:")
+                    .font(.system(size: 10, weight: .medium))
+                    .foregroundColor(.secondary)
+                
+                ForEach(llmManager.getProvidersWithKeys(), id: \.self) { provider in
+                    HStack {
+                        Text("\(provider.icon) \(provider.displayName)")
+                            .font(.system(size: 10))
+                        
+                        Spacer()
+                        
+                        Image(systemName: "checkmark.circle.fill")
+                            .foregroundColor(.green)
+                            .font(.system(size: 10))
+                    }
                 }
             }
         }

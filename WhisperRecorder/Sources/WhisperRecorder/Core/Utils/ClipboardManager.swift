@@ -79,9 +79,6 @@ class ClipboardManager: ObservableObject {
             // Show toast with full text (no truncation)
             ToastManager.shared.showToast(message: "Copied to clipboard", preview: text)
             
-            // Play sound for manual copy operations
-            NSSound(named: "Tink")?.play()
-            
             // Auto-paste to active input
             if autoPasteEnabled {
                 autoPasteToActiveInput()
@@ -117,7 +114,7 @@ class ClipboardManager: ObservableObject {
     }
     
     private func performPaste() {
-        // Method 1: Try NSApp sendAction
+        // Method 1: Try NSApp sendAction (safest)
         logDebug(.audio, "Method 1: NSApp.sendAction")
         let result1 = NSApp.sendAction(#selector(NSText.paste(_:)), to: nil, from: nil)
         logDebug(.audio, "NSApp.sendAction result: \(result1)")
@@ -128,13 +125,20 @@ class ClipboardManager: ObservableObject {
             self.sendPasteKeyEvent()
         }
         
-        // Method 3: Try NSApp sendAction to first responder specifically
+        // Method 3: Try NSApp sendAction to first responder (SAFELY)
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
             logDebug(.audio, "Method 3: Targeted sendAction")
             if let window = NSApp.keyWindow,
                let responder = window.firstResponder {
-                logDebug(.audio, "Sending paste to responder: \(type(of: responder))")
-                NSApp.sendAction(#selector(NSText.paste(_:)), to: responder, from: nil)
+                logDebug(.audio, "Found responder: \(type(of: responder))")
+                
+                // SAFELY check if responder supports paste: selector
+                if responder.responds(to: #selector(NSText.paste(_:))) {
+                    logDebug(.audio, "Responder supports paste selector - sending action")
+                    NSApp.sendAction(#selector(NSText.paste(_:)), to: responder, from: nil)
+                } else {
+                    logDebug(.audio, "Responder does not support paste selector - skipping")
+                }
             }
         }
         
