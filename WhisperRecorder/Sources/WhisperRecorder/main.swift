@@ -1,5 +1,6 @@
 import AVFoundation
 import AppKit
+import Combine
 import Darwin
 import Foundation
 import KeyboardShortcuts
@@ -13,6 +14,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     var statusItem: NSStatusItem?
     let audioRecorder = AudioRecorder.shared
     var popover: NSPopover?
+    var toastWindow: ToastWindow?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         // Initialize debug manager first
@@ -101,6 +103,11 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         // Set up status item in the menu bar
         logInfo(.ui, "Setting up menu bar")
         setupMenuBar()
+        
+        // Initialize toast window
+        logInfo(.ui, "Setting up toast window")
+        setupToastWindow()
+        
         logInfo(.system, "Application startup complete")
 
         let mainMenu = NSMenu()
@@ -146,6 +153,32 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         popover?.contentViewController = NSHostingController(
             rootView: NewPopoverView(audioRecorder: audioRecorder))  // Use new card-based view
         logDebug(.ui, "Menu bar setup complete")
+    }
+
+    private func setupToastWindow() {
+        toastWindow = ToastWindow()
+        print("🎯 [MAIN] ToastWindow created: \(toastWindow != nil)")
+        
+        // Observe ToastManager state changes
+        let cancellable = ToastManager.shared.$isShowing
+            .sink { [weak self] isShowing in
+                print("🎯 [MAIN] Toast isShowing changed to: \(isShowing)")
+                DispatchQueue.main.async {
+                    self?.toastWindow?.updateToastContent()
+                    
+                    if isShowing {
+                        print("🎯 [MAIN] Showing toast at position: \(ToastManager.shared.position)")
+                        self?.toastWindow?.showToastAtPosition(ToastManager.shared.position)
+                    } else {
+                        print("🎯 [MAIN] Hiding toast")
+                        self?.toastWindow?.orderOut(nil)
+                    }
+                }
+            }
+        
+        // Keep the cancellable (in a real app, you'd store this)
+        objc_setAssociatedObject(self, "toastCancellable", cancellable, .OBJC_ASSOCIATION_RETAIN)
+        print("🎯 [MAIN] Toast observer setup complete")
     }
 
     @objc func togglePopover(_ sender: AnyObject) {

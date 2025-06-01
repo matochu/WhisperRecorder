@@ -37,10 +37,6 @@ let package = Package(
                 "CWhisper",
             ],
             path: "Sources/WhisperRecorder",
-            resources: [
-                // Make sure KeyboardShortcuts resources are included
-                .process("Resources")
-            ],
             linkerSettings: [
                 .linkedFramework("AVFoundation"),
                 .linkedFramework("AppKit"),

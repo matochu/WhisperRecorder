@@ -1,6 +1,174 @@
 import SwiftUI
 import KeyboardShortcuts
 
+// MARK: - Toast View
+struct ToastView: View {
+    let message: String
+    let preview: String
+    @Binding var isShowing: Bool
+    
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(spacing: 6) {
+                Text("✅")
+                    .font(.system(size: 14))
+                Text(message)
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundColor(.primary)
+            }
+            
+            if !preview.isEmpty {
+                Text(preview)
+                    .font(.system(size: 10))
+                    .foregroundColor(.secondary)
+                    .lineLimit(2)
+                    .padding(.leading, 20) // Indent under the checkmark
+            }
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
+        .background(
+            RoundedRectangle(cornerRadius: 8)
+                .fill(Color(.controlBackgroundColor))
+                .shadow(color: .black.opacity(0.3), radius: 10, x: 0, y: 5)
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 8)
+                .stroke(Color(.separatorColor), lineWidth: 1)
+        )
+        .scaleEffect(isShowing ? 1.0 : 0.8)
+        .opacity(isShowing ? 1.0 : 0.0)
+        .animation(.spring(response: 0.3, dampingFraction: 0.7), value: isShowing)
+    }
+}
+
+// MARK: - Toast Manager
+class ToastManager: ObservableObject {
+    @Published var isShowing = false
+    @Published var message = ""
+    @Published var preview = ""
+    @Published var position = NSPoint.zero
+    
+    static let shared = ToastManager()
+    private var hideTimer: Timer?
+    
+    private init() {}
+    
+    func showToast(message: String, preview: String = "", at position: NSPoint? = nil) {
+        // Get cursor position if not provided
+        let toastPosition = position ?? NSEvent.mouseLocation
+        
+        print("🎯 [TOAST MANAGER] showToast called - message: '\(message)', preview: '\(preview)'")
+        print("🎯 [TOAST MANAGER] Cursor position: \(toastPosition)")
+        
+        DispatchQueue.main.async {
+            self.message = message
+            self.preview = String(preview.prefix(60)) // Limit preview length
+            self.position = toastPosition
+            self.isShowing = true
+            
+            print("🎯 [TOAST MANAGER] Set isShowing = true, position = \(self.position)")
+            
+            // Hide after 2.5 seconds
+            self.hideTimer?.invalidate()
+            self.hideTimer = Timer.scheduledTimer(withTimeInterval: 2.5, repeats: false) { _ in
+                self.hideToast()
+            }
+        }
+    }
+    
+    func hideToast() {
+        DispatchQueue.main.async {
+            self.isShowing = false
+            self.hideTimer?.invalidate()
+        }
+    }
+}
+
+// MARK: - Toast Window
+class ToastWindow: NSWindow {
+    private var toastView: NSHostingView<ToastView>!
+    
+    init() {
+        super.init(
+            contentRect: NSRect(x: 0, y: 0, width: 300, height: 100),
+            styleMask: [.borderless],
+            backing: .buffered,
+            defer: false
+        )
+        
+        self.isOpaque = false
+        self.backgroundColor = NSColor.clear
+        self.level = .statusBar
+        self.ignoresMouseEvents = true
+        self.hasShadow = false
+        
+        setupToastView()
+    }
+    
+    private func setupToastView() {
+        let toastBinding = Binding<Bool>(
+            get: { ToastManager.shared.isShowing },
+            set: { _ in }
+        )
+        
+        toastView = NSHostingView(rootView: ToastView(
+            message: ToastManager.shared.message,
+            preview: ToastManager.shared.preview,
+            isShowing: toastBinding
+        ))
+        
+        self.contentView = toastView
+    }
+    
+    func updateToastContent() {
+        let toastBinding = Binding<Bool>(
+            get: { ToastManager.shared.isShowing },
+            set: { _ in }
+        )
+        
+        toastView.rootView = ToastView(
+            message: ToastManager.shared.message,
+            preview: ToastManager.shared.preview,
+            isShowing: toastBinding
+        )
+    }
+    
+    func showToastAtPosition(_ position: NSPoint) {
+        // Convert screen coordinates (origin bottom-left) to window position
+        let screenFrame = NSScreen.main?.frame ?? NSRect.zero
+        let windowSize = NSSize(width: 300, height: 100)
+        
+        print("🎯 [TOAST WINDOW] showToastAtPosition called")
+        print("🎯 [TOAST WINDOW] Input position: \(position)")
+        print("🎯 [TOAST WINDOW] Screen frame: \(screenFrame)")
+        
+        // Position toast slightly below and to the right of cursor
+        let windowX = position.x + 10
+        let windowY = position.y - windowSize.height - 10
+        
+        // Keep toast on screen
+        let finalX = min(windowX, screenFrame.maxX - windowSize.width - 20)
+        let finalY = max(windowY, screenFrame.minY + 20)
+        
+        let finalPosition = NSPoint(x: finalX, y: finalY)
+        print("🎯 [TOAST WINDOW] Final position: \(finalPosition)")
+        print("🎯 [TOAST WINDOW] Window size: \(windowSize)")
+        
+        self.setFrameOrigin(finalPosition)
+        self.setContentSize(windowSize)
+        
+        print("🎯 [TOAST WINDOW] Window frame after setup: \(self.frame)")
+        print("🎯 [TOAST WINDOW] Window level: \(self.level.rawValue)")
+        print("🎯 [TOAST WINDOW] Window is visible: \(self.isVisible)")
+        
+        self.orderFront(nil)
+        
+        print("🎯 [TOAST WINDOW] orderFront called, now visible: \(self.isVisible)")
+        print("🎯 [TOAST WINDOW] Window alpha: \(self.alphaValue)")
+    }
+}
+
 // MARK: - Text Storage State 
 extension AppDelegate {
     static var lastOriginalWhisperText: String = ""
@@ -341,22 +509,31 @@ struct ActionsCard: View {
     
     private func copyText(type: TextType) {
         let text: String
+        let toastMessage: String
+        
         switch type {
         case .processed:
             text = AppDelegate.lastProcessedText
-            logInfo(.ui, "📋 Copied processed text to clipboard")
+            toastMessage = "Copied processed text"
+            logInfo(.ui, "📋 [TOAST] Copied processed text to clipboard")
         case .original:
             text = AppDelegate.lastOriginalWhisperText
-            logInfo(.ui, "📄 Copied original Whisper text to clipboard")
+            toastMessage = "Copied original text"
+            logInfo(.ui, "📄 [TOAST] Copied original Whisper text to clipboard")
         }
         
         guard !text.isEmpty else {
-            logWarning(.ui, "❌ No text available to copy")
+            logWarning(.ui, "❌ [TOAST] No text available to copy")
             return
         }
         
         NSPasteboard.general.clearContents()
         NSPasteboard.general.setString(text, forType: .string)
+        
+        // Show toast with preview
+        let preview = String(text.prefix(60)).trimmingCharacters(in: .whitespacesAndNewlines)
+        logInfo(.ui, "🎯 [TOAST] Showing toast: '\(toastMessage)' with preview: '\(preview)'")
+        ToastManager.shared.showToast(message: toastMessage, preview: preview)
     }
     
     private func processAgain() {
@@ -411,6 +588,7 @@ struct ConfigurationCard: View {
     @State private var settingsType: SettingsType? = nil
     @State private var selectedModelIndex = 0
     @State private var modelRefreshTrigger = false
+    @ObservedObject private var audioRecorder = AudioRecorder.shared  // Add this to observe status changes
     
     // Settings panel types
     enum SettingsType {
@@ -512,6 +690,52 @@ struct ConfigurationCard: View {
                 )
             )
             
+            // Auto-paste permissions status
+            configRow(
+                icon: "📋",
+                label: "Auto-Paste",
+                content: AnyView(
+                    HStack(spacing: 4) {
+                        Button(action: {
+                            if audioRecorder.accessibilityPermissionsStatus {
+                                // Toggle auto-paste if permissions are granted
+                                AudioRecorder.shared.autoPasteEnabled.toggle()
+                            } else {
+                                // Request permissions if not granted
+                                AudioRecorder.shared.requestAccessibilityPermissions()
+                            }
+                            // Refresh status after action
+                            AudioRecorder.shared.updateAccessibilityPermissionStatus()
+                        }) {
+                            HStack(spacing: 4) {
+                                let hasPermissions = audioRecorder.accessibilityPermissionsStatus
+                                let isEnabled = AudioRecorder.shared.autoPasteEnabled
+                                
+                                if !hasPermissions {
+                                    Text("❌ No Permissions")
+                                        .font(.system(size: 12))
+                                        .foregroundColor(.red)
+                                } else if isEnabled {
+                                    Text("✅ Enabled")
+                                        .font(.system(size: 12))
+                                        .foregroundColor(.green)
+                                } else {
+                                    Text("⏸️ Disabled")
+                                        .font(.system(size: 12))
+                                        .foregroundColor(.orange)
+                                }
+                                
+                                Image(systemName: hasPermissions ? (isEnabled ? "checkmark.circle" : "pause.circle") : "gear")
+                                    .font(.system(size: 10))
+                                    .foregroundColor(.secondary)
+                            }
+                        }
+                        .buttonStyle(PlainButtonStyle())
+                        .help(autoPasteTooltip)
+                    }
+                )
+            )
+            
             // Universal settings panel
             if let settingsType = settingsType {
                 Divider()
@@ -537,10 +761,21 @@ struct ConfigurationCard: View {
         .onAppear {
             // Set correct model index when view appears
             updateSelectedModelIndex()
+            
+            // Load saved language preference
+            let savedLanguageCode = UserDefaults.standard.string(forKey: "selectedLanguageCode") ?? WritingStyleManager.shared.currentTargetLanguage
+            selectedLanguageCode = savedLanguageCode
+            WritingStyleManager.shared.setTargetLanguage(savedLanguageCode)
         }
         .onChange(of: WhisperWrapper.shared.currentModel.id) { _ in
             // Update when current model changes
             updateSelectedModelIndex()
+        }
+        .onChange(of: selectedLanguageCode) { newValue in
+            WritingStyleManager.shared.setTargetLanguage(newValue)
+            // Save to UserDefaults
+            UserDefaults.standard.set(newValue, forKey: "selectedLanguageCode")
+            logDebug(.ui, "💾 Saved target language: \(WritingStyleManager.supportedLanguages[newValue] ?? newValue)")
         }
     }
     
@@ -744,6 +979,19 @@ struct ConfigurationCard: View {
             selectedModelIndex = index
         } else {
             selectedModelIndex = 0  // Fallback to first model if current not found
+        }
+    }
+    
+    private var autoPasteTooltip: String {
+        let hasPermissions = audioRecorder.accessibilityPermissionsStatus
+        let isEnabled = AudioRecorder.shared.autoPasteEnabled
+        
+        if !hasPermissions {
+            return "Click to request accessibility permissions for auto-paste functionality"
+        } else if isEnabled {
+            return "Auto-paste is enabled - transcribed text will be automatically pasted to active text fields"
+        } else {
+            return "Auto-paste is disabled - click to enable automatic pasting"
         }
     }
 }
