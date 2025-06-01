@@ -8,37 +8,25 @@ struct ToastView: View {
     @Binding var isShowing: Bool
     
     var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            HStack(spacing: 6) {
-                Text("✅")
-                    .font(.system(size: 14))
-                Text(message)
-                    .font(.system(size: 12, weight: .medium))
-                    .foregroundColor(.primary)
-            }
-            
-            if !preview.isEmpty {
-                Text(preview)
-                    .font(.system(size: 10))
-                    .foregroundColor(.secondary)
-                    .lineLimit(2)
-                    .padding(.leading, 20) // Indent under the checkmark
-            }
-        }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 8)
-        .background(
-            RoundedRectangle(cornerRadius: 8)
-                .fill(Color(.controlBackgroundColor))
-                .shadow(color: .black.opacity(0.3), radius: 10, x: 0, y: 5)
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: 8)
-                .stroke(Color(.separatorColor), lineWidth: 1)
-        )
-        .scaleEffect(isShowing ? 1.0 : 0.8)
-        .opacity(isShowing ? 1.0 : 0.0)
-        .animation(.spring(response: 0.3, dampingFraction: 0.7), value: isShowing)
+        // Show the full copied text content with darker 8-bit + macOS style background
+        Text(preview.isEmpty ? message : preview)
+            .font(.system(size: 11, weight: .medium, design: .monospaced))  // Monospaced for 8-bit feel
+            .foregroundColor(.primary)
+            .padding(.horizontal, 12)
+            .padding(.vertical, 8)
+            .frame(width: 300, alignment: .leading)  // Fixed width, left-aligned text
+            .fixedSize(horizontal: false, vertical: true)  // Allow vertical expansion
+            .background(
+                RoundedRectangle(cornerRadius: 6)
+                    .fill(Color(.controlColor).opacity(0.7))  // Less bright background
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 6)
+                            .stroke(Color(.tertiaryLabelColor).opacity(0.5), lineWidth: 1)  // Subtle border
+                    )
+            )
+            .scaleEffect(isShowing ? 1.0 : 0.9)
+            .opacity(isShowing ? 0.75 : 0.0)  // Reduced opacity from 0.92 to 0.75
+            .animation(.easeInOut(duration: 0.15), value: isShowing)
     }
 }
 
@@ -50,37 +38,99 @@ class ToastManager: ObservableObject {
     @Published var position = NSPoint.zero
     
     static let shared = ToastManager()
-    private var hideTimer: Timer?
+    private var globalKeyMonitor: Any?
+    private var localKeyMonitor: Any?
+    private var isAutoPasteInProgress = false  // Flag to prevent hiding during auto-paste
     
-    private init() {}
+    // Settings - completely separate from auto-paste
+    @Published var toastsEnabled: Bool {
+        didSet {
+            print("🎯 [TOAST SETTINGS] toastsEnabled changed: \(oldValue) → \(toastsEnabled)")
+            UserDefaults.standard.set(toastsEnabled, forKey: "whisperToastsEnabled")
+            print("🎯 [TOAST SETTINGS] Saved to UserDefaults successfully")
+        }
+    }
+    
+    private init() {
+        // Load saved preference with proper fallback
+        self.toastsEnabled = UserDefaults.standard.object(forKey: "whisperToastsEnabled") as? Bool ?? true
+        print("🎯 [TOAST SETTINGS] ToastManager initialized - toastsEnabled: \(toastsEnabled)")
+    }
+    
+    // Control auto-paste state
+    func setAutoPasteInProgress(_ inProgress: Bool) {
+        isAutoPasteInProgress = inProgress
+    }
+    
+    // Hide toast when starting new recording
+    func hideToastForNewRecording() {
+        hideToast()
+    }
     
     func showToast(message: String, preview: String = "", at position: NSPoint? = nil) {
+        // Check if toasts are enabled for visual display
+        guard toastsEnabled else {
+            return
+        }
+        
         // Get cursor position if not provided
         let toastPosition = position ?? NSEvent.mouseLocation
         
-        print("🎯 [TOAST MANAGER] showToast called - message: '\(message)', preview: '\(preview)'")
-        print("🎯 [TOAST MANAGER] Cursor position: \(toastPosition)")
-        
         DispatchQueue.main.async {
-            self.message = message
-            self.preview = String(preview.prefix(60)) // Limit preview length
+            // Show the full preview text (not truncated)
+            self.message = ""  // Clear message - we don't want it
+            self.preview = preview.trimmingCharacters(in: .whitespacesAndNewlines) // Show full text, just trim whitespace
             self.position = toastPosition
+            
             self.isShowing = true
             
-            print("🎯 [TOAST MANAGER] Set isShowing = true, position = \(self.position)")
-            
-            // Hide after 2.5 seconds
-            self.hideTimer?.invalidate()
-            self.hideTimer = Timer.scheduledTimer(withTimeInterval: 2.5, repeats: false) { _ in
-                self.hideToast()
+            // Set up key monitoring to hide on any key press - NO TIMER
+            self.setupKeyMonitoring()
+        }
+    }
+    
+    private func setupKeyMonitoring() {
+        // Remove existing monitor
+        if let globalKeyMonitor = globalKeyMonitor {
+            NSEvent.removeMonitor(globalKeyMonitor)
+        }
+        if let localKeyMonitor = localKeyMonitor {
+            NSEvent.removeMonitor(localKeyMonitor)
+        }
+        
+        // Monitor for any key press to hide toast - use both local and global
+        globalKeyMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.keyDown, .leftMouseDown, .rightMouseDown]) { [weak self] event in
+            guard let self = self else { return }
+            if self.isAutoPasteInProgress {
+                return
             }
+            self.hideToast()
+        }
+        
+        // Also add local monitor for key events within the app
+        localKeyMonitor = NSEvent.addLocalMonitorForEvents(matching: [.keyDown, .leftMouseDown, .rightMouseDown]) { [weak self] event in
+            guard let self = self else { return event }
+            if self.isAutoPasteInProgress {
+                return event
+            }
+            self.hideToast()
+            return event  // Return the event to allow normal processing
         }
     }
     
     func hideToast() {
         DispatchQueue.main.async {
             self.isShowing = false
-            self.hideTimer?.invalidate()
+            
+            // Remove key monitor
+            if let globalKeyMonitor = self.globalKeyMonitor {
+                NSEvent.removeMonitor(globalKeyMonitor)
+                self.globalKeyMonitor = nil
+            }
+            if let localKeyMonitor = self.localKeyMonitor {
+                NSEvent.removeMonitor(localKeyMonitor)
+                self.localKeyMonitor = nil
+            }
         }
     }
 }
@@ -91,7 +141,7 @@ class ToastWindow: NSWindow {
     
     init() {
         super.init(
-            contentRect: NSRect(x: 0, y: 0, width: 300, height: 100),
+            contentRect: NSRect(x: 0, y: 0, width: 320, height: 50),  // Wider for 300px content + padding
             styleMask: [.borderless],
             backing: .buffered,
             defer: false
@@ -99,7 +149,7 @@ class ToastWindow: NSWindow {
         
         self.isOpaque = false
         self.backgroundColor = NSColor.clear
-        self.level = .statusBar
+        self.level = .statusBar  // Keep it visible but not too intrusive
         self.ignoresMouseEvents = true
         self.hasShadow = false
         
@@ -135,37 +185,32 @@ class ToastWindow: NSWindow {
     }
     
     func showToastAtPosition(_ position: NSPoint) {
-        // Convert screen coordinates (origin bottom-left) to window position
+        // Update content first
+        updateToastContent()
+        
+        // Calculate dynamic height based on text length
+        let textLength = ToastManager.shared.preview.count
+        let estimatedLines = max(1, (textLength / 50) + 1) // Roughly 50 chars per line
+        let dynamicHeight = min(200, max(50, estimatedLines * 20 + 20)) // 20px per line + padding
+        
+        // Convert screen coordinates for positioning
         let screenFrame = NSScreen.main?.frame ?? NSRect.zero
-        let windowSize = NSSize(width: 300, height: 100)
+        let windowSize = NSSize(width: 320, height: CGFloat(dynamicHeight))
         
-        print("🎯 [TOAST WINDOW] showToastAtPosition called")
-        print("🎯 [TOAST WINDOW] Input position: \(position)")
-        print("🎯 [TOAST WINDOW] Screen frame: \(screenFrame)")
+        // Position toast below and to the right of cursor
+        let windowX = position.x + 20  // 20px to the right of cursor
+        let windowY = position.y - CGFloat(dynamicHeight) - 10  // Below cursor with 10px gap
         
-        // Position toast slightly below and to the right of cursor
-        let windowX = position.x + 10
-        let windowY = position.y - windowSize.height - 10
-        
-        // Keep toast on screen
-        let finalX = min(windowX, screenFrame.maxX - windowSize.width - 20)
-        let finalY = max(windowY, screenFrame.minY + 20)
+        // Keep toast on screen horizontally
+        let finalX = max(10, min(windowX, screenFrame.maxX - windowSize.width - 10))
+        let finalY = windowY
         
         let finalPosition = NSPoint(x: finalX, y: finalY)
-        print("🎯 [TOAST WINDOW] Final position: \(finalPosition)")
-        print("🎯 [TOAST WINDOW] Window size: \(windowSize)")
         
         self.setFrameOrigin(finalPosition)
         self.setContentSize(windowSize)
         
-        print("🎯 [TOAST WINDOW] Window frame after setup: \(self.frame)")
-        print("🎯 [TOAST WINDOW] Window level: \(self.level.rawValue)")
-        print("🎯 [TOAST WINDOW] Window is visible: \(self.isVisible)")
-        
         self.orderFront(nil)
-        
-        print("🎯 [TOAST WINDOW] orderFront called, now visible: \(self.isVisible)")
-        print("🎯 [TOAST WINDOW] Window alpha: \(self.alphaValue)")
     }
 }
 
@@ -236,14 +281,40 @@ struct StatusCard: View {
     
     var body: some View {
         VStack(spacing: 6) {
-            // Main status line
-            statusLine(
-                left: statusIcon + " " + statusText,
-                right: recordingDuration,
-                isPrimary: true
-            )
+            // Main status line with Rec button
+            HStack {
+                // Only show recording timer when recording
+                HStack(spacing: 8) {
+                    if !recordingDuration.isEmpty {
+                        Text(recordingDuration)
+                            .font(.system(size: 13, weight: .medium))
+                            .foregroundColor(.red)
+                    }
+                }
+                
+                Spacer()
+                
+                // Recording button moved to right (styled like Process Again)
+                Button(action: {
+                    audioRecorder.toggleRecording()
+                }) {
+                    HStack(spacing: 4) {
+                        Image(systemName: recButtonSystemIcon)
+                            .font(.system(size: 10))
+                        Text(recButtonText)
+                            .font(.system(size: 11))
+                    }
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 4)
+                    .background(recButtonBackgroundColor)
+                    .foregroundColor(recButtonTextColor)
+                    .cornerRadius(4)
+                }
+                .buttonStyle(PlainButtonStyle())
+                .frame(height: 24) // Fixed height like Process Again
+            }
             
-            // Secondary info lines
+            // Secondary info lines  
             statusLine(
                 left: "Memory: \(formatMemorySize(memoryUsage))",
                 right: memoryDelta,
@@ -332,9 +403,54 @@ struct StatusCard: View {
         if WhisperWrapper.shared.isDownloading {
             return "Downloading..."
         } else if WhisperWrapper.shared.isModelLoaded() {
-            return "\(currentModel.displayName) - Ready"
+            return currentModel.displayName
         } else {
-            return "\(currentModel.displayName) - Not Available"
+            return currentModel.displayName
+        }
+    }
+    
+    private var recButtonIcon: String {
+        switch audioRecorder.statusDescription {
+        case "Recording...": return "🔴"
+        case "Transcribing...": return "🟡"
+        case "Processing...": return "🔵"
+        default: return "✅"
+        }
+    }
+    
+    private var recButtonText: String {
+        switch audioRecorder.statusDescription {
+        case "Recording...": return "Stop Recording"
+        case "Transcribing...": return "Stop Transcription"
+        case "Processing...": return "Stop Processing"
+        default: return "Start Recording"
+        }
+    }
+    
+    private var recButtonTextColor: Color {
+        switch audioRecorder.statusDescription {
+        case "Recording...": return .white
+        case "Transcribing...": return .white
+        case "Processing...": return .white
+        default: return .primary
+        }
+    }
+    
+    private var recButtonBackgroundColor: Color {
+        switch audioRecorder.statusDescription {
+        case "Recording...": return Color(.systemRed)
+        case "Transcribing...": return Color(.systemOrange)
+        case "Processing...": return Color(.systemBlue)
+        default: return Color(.controlColor)
+        }
+    }
+    
+    private var recButtonSystemIcon: String {
+        switch audioRecorder.statusDescription {
+        case "Recording...": return "stop.circle.fill"
+        case "Transcribing...": return "waveform.circle"
+        case "Processing...": return "gearshape.circle"
+        default: return "record.circle"
         }
     }
 }
@@ -530,10 +646,12 @@ struct ActionsCard: View {
         NSPasteboard.general.clearContents()
         NSPasteboard.general.setString(text, forType: .string)
         
-        // Show toast with preview
-        let preview = String(text.prefix(60)).trimmingCharacters(in: .whitespacesAndNewlines)
-        logInfo(.ui, "🎯 [TOAST] Showing toast: '\(toastMessage)' with preview: '\(preview)'")
-        ToastManager.shared.showToast(message: toastMessage, preview: preview)
+        // Play centralized sound for manual copy operations
+        NSSound(named: "Tink")?.play()
+        
+        // Show toast with full text (no truncation)
+        logInfo(.ui, "🎯 [TOAST] Showing toast: '\(toastMessage)' with full text: \(text.count) chars")
+        ToastManager.shared.showToast(message: toastMessage, preview: text)
     }
     
     private func processAgain() {
@@ -588,7 +706,8 @@ struct ConfigurationCard: View {
     @State private var settingsType: SettingsType? = nil
     @State private var selectedModelIndex = 0
     @State private var modelRefreshTrigger = false
-    @ObservedObject private var audioRecorder = AudioRecorder.shared  // Add this to observe status changes
+    @ObservedObject private var toastManager = ToastManager.shared
+    @ObservedObject private var audioRecorder = AudioRecorder.shared
     
     // Settings panel types
     enum SettingsType {
@@ -676,7 +795,7 @@ struct ConfigurationCard: View {
                             settingsType = settingsType == .api ? nil : .api
                         }) {
                             HStack(spacing: 4) {
-                                Text(WritingStyleManager.shared.hasApiKey() ? "✅ Connected" : "❌ Not Set")
+                                Text(WritingStyleManager.shared.hasApiKey() ? "Connected" : "Not Set")
                                     .font(.system(size: 12))
                                     .foregroundColor(WritingStyleManager.shared.hasApiKey() ? .green : .orange)
                                 
@@ -697,30 +816,31 @@ struct ConfigurationCard: View {
                 content: AnyView(
                     HStack(spacing: 4) {
                         Button(action: {
-                            if audioRecorder.accessibilityPermissionsStatus {
+                            if AudioRecorder.shared.hasAccessibilityPermissions {
                                 // Toggle auto-paste if permissions are granted
-                                AudioRecorder.shared.autoPasteEnabled.toggle()
+                                print("🎯 [UI] Auto-paste button clicked - current state: \(audioRecorder.autoPasteEnabled)")
+                                audioRecorder.autoPasteEnabled.toggle()
+                                print("🎯 [UI] Auto-paste button clicked - new state: \(audioRecorder.autoPasteEnabled)")
                             } else {
                                 // Request permissions if not granted
-                                AudioRecorder.shared.requestAccessibilityPermissions()
+                                print("🎯 [UI] No permissions detected - requesting accessibility permissions")
+                                AudioRecorder.shared.requestAccessibilityPermissionsWithPrompt()
                             }
-                            // Refresh status after action
-                            AudioRecorder.shared.updateAccessibilityPermissionStatus()
                         }) {
                             HStack(spacing: 4) {
-                                let hasPermissions = audioRecorder.accessibilityPermissionsStatus
-                                let isEnabled = AudioRecorder.shared.autoPasteEnabled
+                                let hasPermissions = AudioRecorder.shared.hasAccessibilityPermissions
+                                let isEnabled = audioRecorder.autoPasteEnabled
                                 
                                 if !hasPermissions {
-                                    Text("❌ No Permissions")
+                                    Text("No Permissions")
                                         .font(.system(size: 12))
                                         .foregroundColor(.red)
                                 } else if isEnabled {
-                                    Text("✅ Enabled")
+                                    Text("Enabled")
                                         .font(.system(size: 12))
                                         .foregroundColor(.green)
                                 } else {
-                                    Text("⏸️ Disabled")
+                                    Text("Disabled")
                                         .font(.system(size: 12))
                                         .foregroundColor(.orange)
                                 }
@@ -729,9 +849,65 @@ struct ConfigurationCard: View {
                                     .font(.system(size: 10))
                                     .foregroundColor(.secondary)
                             }
+                            .onAppear {
+                                print("🎯 [UI] Auto-Paste button rendered:")
+                                print("🎯 [UI]   - hasPermissions: \(AudioRecorder.shared.hasAccessibilityPermissions)")
+                                print("🎯 [UI]   - isEnabled: \(audioRecorder.autoPasteEnabled)")
+                                print("🎯 [UI]   - accessibilityPermissionsStatus: \(AudioRecorder.shared.accessibilityPermissionsStatus)")
+                            }
                         }
                         .buttonStyle(PlainButtonStyle())
-                        .help(autoPasteTooltip)
+                        
+                        // Manual permissions check button
+                        Button(action: {
+                            // Manually recheck permissions
+                            print("🔄 [UI] Manual permission check button clicked!")
+                            print("🔄 [UI] Current state before check:")
+                            print("🔄 [UI]   - hasAccessibilityPermissions: \(AudioRecorder.shared.hasAccessibilityPermissions)")
+                            print("🔄 [UI]   - accessibilityPermissionsStatus: \(AudioRecorder.shared.accessibilityPermissionsStatus)")
+                            AudioRecorder.shared.checkPermissionsStatus()
+                            
+                            // Check state after
+                            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                                print("🔄 [UI] State after manual check:")
+                                print("🔄 [UI]   - hasAccessibilityPermissions: \(AudioRecorder.shared.hasAccessibilityPermissions)")
+                                print("🔄 [UI]   - accessibilityPermissionsStatus: \(AudioRecorder.shared.accessibilityPermissionsStatus)")
+                            }
+                        }) {
+                            Image(systemName: "arrow.clockwise")
+                                .font(.system(size: 10))
+                                .foregroundColor(.secondary)
+                        }
+                        .buttonStyle(PlainButtonStyle())
+                        .help("Manually check permissions status")
+                    }
+                )
+            )
+            
+            // Toast notifications control - completely separate setting
+            configRow(
+                icon: "💬",
+                label: "Toasts",
+                content: AnyView(
+                    HStack(spacing: 4) {
+                        Button(action: {
+                            print("🎯 [UI] Toast button clicked - current state: \(toastManager.toastsEnabled)")
+                            toastManager.toastsEnabled.toggle()
+                            print("🎯 [UI] Toast button clicked - new state: \(toastManager.toastsEnabled)")
+                            // NO TEST TOAST - just toggle the setting
+                        }) {
+                            HStack(spacing: 4) {
+                                Text(toastManager.toastsEnabled ? "Enabled" : "Disabled")
+                                    .font(.system(size: 12))
+                                    .foregroundColor(toastManager.toastsEnabled ? .green : .orange)
+                                
+                                Image(systemName: toastManager.toastsEnabled ? "checkmark.circle" : "pause.circle")
+                                    .font(.system(size: 10))
+                                    .foregroundColor(.secondary)
+                            }
+                        }
+                        .buttonStyle(PlainButtonStyle())
+                        .help(toastManager.toastsEnabled ? "Toast notifications enabled - click to disable" : "Toast notifications disabled - click to enable")
                     }
                 )
             )
@@ -800,9 +976,9 @@ struct ConfigurationCard: View {
         if WhisperWrapper.shared.isDownloading {
             return "Downloading..."
         } else if WhisperWrapper.shared.isModelLoaded() {
-            return "✅ \(currentModel.displayName)"
+            return currentModel.displayName
         } else {
-            return "❌ \(currentModel.displayName)"
+            return currentModel.displayName
         }
     }
     
@@ -981,19 +1157,6 @@ struct ConfigurationCard: View {
             selectedModelIndex = 0  // Fallback to first model if current not found
         }
     }
-    
-    private var autoPasteTooltip: String {
-        let hasPermissions = audioRecorder.accessibilityPermissionsStatus
-        let isEnabled = AudioRecorder.shared.autoPasteEnabled
-        
-        if !hasPermissions {
-            return "Click to request accessibility permissions for auto-paste functionality"
-        } else if isEnabled {
-            return "Auto-paste is enabled - transcribed text will be automatically pasted to active text fields"
-        } else {
-            return "Auto-paste is disabled - click to enable automatic pasting"
-        }
-    }
 }
 
 // MARK: - System Card
@@ -1029,3 +1192,4 @@ struct SystemCard: View {
         .buttonStyle(PlainButtonStyle())
     }
 } 
+ 

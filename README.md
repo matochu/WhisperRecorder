@@ -682,61 +682,230 @@ to share your own projects that use `whisper.cpp`. If you have a question, make 
 
 # WhisperRecorder
 
-A menu bar app for macOS that records audio and transcribes it using the Whisper model.
+🎙️ **Advanced macOS Voice Recording & Transcription Tool**
 
-## Features
+A sophisticated macOS menu bar application for voice recording and transcription using OpenAI's Whisper model with AI-powered text enhancement. Built on whisper.cpp for high-performance local processing.
 
-- Record audio with a keyboard shortcut (default: Option+Space)
-- Transcribe audio using the whisper.cpp library
-- Copy transcription to clipboard
-- Menu bar status indicator
-- Notification when transcription is complete
+![Version](https://img.shields.io/badge/version-1.3.1-blue)
+![Platform](https://img.shields.io/badge/platform-macOS-lightgrey)
+![Swift](https://img.shields.io/badge/swift-5.9+-orange)
 
-## Building
+## ✨ Features
 
-1. Clone this repository
-2. Make sure you have Swift and Xcode installed
-3. Run `./build.sh` to build the app
-4. Run `./run_whisper.sh` to start the app
+- 🎤 **Voice Recording**: Record audio with configurable hotkeys
+- 🤖 **AI Transcription**: Local Whisper model processing (fully offline)
+- 🌍 **Translation**: Automatic translation to multiple languages
+- ✨ **Text Enhancement**: AI-powered text formatting and style improvements
+- 📋 **Smart Clipboard**: Auto-copy and paste functionality
+- 🔄 **Offline Support**: Works completely offline (except for AI enhancement)
+- ⌨️ **Hotkey Support**: Customizable keyboard shortcuts
+- 🛡️ **Process Safety**: Built-in hang prevention and recovery
 
-## Packaging and Distribution
+## 🚀 Quick Start
 
-### Creating a Distributable App
+### Installation & Setup
 
-To create a standalone app bundle that can be distributed to other users:
+```bash
+# Clone the repository (this includes whisper.cpp as submodule)
+git clone https://github.com/matochu/WhisperRecorder.git
+cd WhisperRecorder
 
-1. Run `./package_app.sh` to build the app bundle
-2. The script will create `WhisperRecorder.app` with all necessary resources and libraries
+# Build the app (safe mode)
+./whisper build
 
-### Creating a Distributable Zip File
-
-To create a zip file for distribution:
-
-```sh
-zip -r WhisperRecorder.zip WhisperRecorder.app
+# Run the app
+./whisper run
 ```
 
-This will create a zip file that includes:
+### Available Commands
 
-- The application executable
-- Required libraries (libwhisper.dylib, libggml libraries)
-- The Whisper model file (ggml-base.en.bin)
+```bash
+# 📦 Build Commands
+./whisper build     # Build WhisperRecorder.app (safe by default)
+./whisper clean     # Clean all build artifacts
 
-### Installation on Other Machines
+# 🚀 Run Commands
+./whisper run       # Run WhisperRecorder.app (safe by default)
+./whisper start     # Alias for 'run'
 
-1. Download and unzip WhisperRecorder.zip
-2. Move WhisperRecorder.app to the Applications folder
-3. Right-click on the app and select "Open" to bypass macOS security (first run only)
-4. Grant microphone permissions when prompted
+# 🔍 Debug Commands
+./whisper debug     # Interactive debug with terminal output
+./whisper lldb      # Debug with LLDB debugger
 
-## Troubleshooting
+# 🚨 Emergency Commands
+./whisper cleanup   # Kill all hanging processes and clean build
+./whisper status    # Show current processes and build status
 
-If the app doesn't start, check the logs:
+# ℹ️ Info Commands
+./whisper help      # Show help
+./whisper version   # Show version info
+```
 
-- `~/Library/Logs/WhisperRecorder.log` - Contains launcher and environment information
-- `~/Library/Application Support/WhisperRecorder/whisperrecorder_debug.log` - Contains detailed application logs
+## 🛡️ Safety Features (v1.3.1+)
 
-Common issues:
+This version includes comprehensive safety measures to prevent process hangs:
 
-- Missing microphone permissions: Go to System Preferences > Security & Privacy > Microphone
-- Missing notification permissions: Go to System Preferences > Notifications
+- ✅ **Automatic process cleanup** before operations
+- ✅ **Lockfiles** prevent multiple instances
+- ✅ **No parallel jobs** to avoid lipo conflicts
+- ✅ **Timeout protection** for audio operations
+- ✅ **Emergency cleanup** functionality
+- ✅ **Process monitoring** and status checking
+
+### Preventing UE State Hangs
+
+The dreaded `UE` (Uninterruptible Sleep + Traced) state that requires Mac restarts is now prevented by:
+
+- Sequential build operations (no parallel lipo)
+- Audio engine timeout protection
+- SystemAudioManager safeguards
+- Automatic process cleanup
+- Safe script architecture
+
+## 📁 Project Structure
+
+```
+WhisperRecorder/
+├── whisper                    # 🎯 Main unified script (use this!)
+├── WhisperRecorder/
+│   ├── whisper               # Local script (called by root)
+│   ├── package_manual.sh     # Core build script
+│   ├── scripts/              # 📦 Legacy scripts (archived)
+│   │   └── README.md         # Migration guide
+│   └── Sources/              # Swift source code
+└── (whisper.cpp files...)    # Base whisper.cpp implementation
+```
+
+## 🔧 Troubleshooting
+
+### Process Hangs (UE State)
+
+If you encounter hanging processes that can't be killed:
+
+```bash
+# Emergency cleanup
+./whisper cleanup
+
+# Check status
+./whisper status
+
+# If cleanup doesn't work, restart your Mac
+sudo reboot
+```
+
+**Common causes:**
+
+- Audio engine hangs on `installTap` or `audioEngine.start()`
+- Core Audio daemon (`coreaudiod`) issues
+- lipo conflicts during parallel builds
+- SystemAudioManager blocking on `AudioObjectSetPropertyData`
+
+### Build Issues
+
+```bash
+# Clean build
+./whisper clean
+./whisper build
+
+# If problems persist
+./whisper cleanup
+./whisper build
+```
+
+### Debug Tools
+
+```bash
+# Interactive debug (see logs in terminal)
+./whisper debug
+
+# Full debugger
+./whisper lldb
+```
+
+## 🎯 Model Selection
+
+WhisperRecorder supports multiple Whisper models:
+
+| Model  | Size   | Speed  | Use Case                   |
+| ------ | ------ | ------ | -------------------------- |
+| tiny   | ~75MB  | ⚡⚡⚡ | Quick notes, simple speech |
+| base   | ~142MB | ⚡⚡   | General use, good balance  |
+| small  | ~466MB | ⚡     | Higher accuracy            |
+| medium | ~1.5GB | 🐌     | Professional transcription |
+| large  | ~3GB   | 🐌🐌   | Maximum accuracy           |
+
+Models with `.en` suffix are optimized for English language.
+
+## 🔑 Configuration
+
+- **Microphone**: Automatic permission request
+- **Accessibility**: Required for auto-paste (granted through app)
+- **Gemini API**: Optional for AI text enhancement
+- **Hotkeys**: Customizable global shortcuts
+- **Models**: Download on-demand
+
+## 🏗️ Development
+
+### Tech Stack
+
+- **Swift 5.9+** with SwiftUI
+- **whisper.cpp** for local AI processing
+- **AVFoundation** for audio recording
+- **Core Audio** for system audio management
+- **Gemini AI API** for text enhancement
+
+### Architecture
+
+- Menu bar app with background processing
+- Real-time audio capture and processing
+- Asynchronous transcription pipeline
+- Safe process management with timeouts
+- Offline-first design with optional cloud features
+
+### Contributing
+
+1. Use the unified `./whisper` script for all operations
+2. Test with both debug modes: `./whisper debug` and `./whisper lldb`
+3. Verify no process hangs with `./whisper status`
+4. Follow the existing safety patterns
+
+## 📝 Migration from v1.2
+
+If you were using old scripts:
+
+```bash
+# ❌ Old way (deprecated)
+./package_manual.sh && ./run.sh
+
+# ✅ New way (safe)
+./whisper build && ./whisper run
+```
+
+Legacy scripts are preserved in `WhisperRecorder/scripts/` directory for reference.
+
+## 🆘 Getting Help
+
+### For Users
+
+- Check `./whisper help` for commands
+- Use `./whisper status` to diagnose issues
+- Run `./whisper cleanup` for emergency fixes
+
+### For Developers
+
+- See `TROUBLESHOOTING.md` for detailed debugging
+- Use debug modes: `./whisper debug` or `./whisper lldb`
+
+## 📜 License
+
+This project builds upon [whisper.cpp](https://github.com/ggerganov/whisper.cpp) and is released under the MIT License.
+
+## 🙏 Credits
+
+- [whisper.cpp](https://github.com/ggerganov/whisper.cpp) - High-performance Whisper implementation
+- [KeyboardShortcuts](https://github.com/sindresorhus/KeyboardShortcuts) - Global hotkey support
+- OpenAI Whisper - The original speech recognition model
+
+---
+
+**Built with ❤️ for macOS developers who value stability and performance.**

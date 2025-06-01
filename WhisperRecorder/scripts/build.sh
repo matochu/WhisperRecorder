@@ -46,14 +46,14 @@ if [ ! -f "$WHISPER_PATH/build/src/libwhisper.dylib" ]; then
     # Set architecture flags for cmake
     if [ "$BUILD_UNIVERSAL" = true ]; then
         # Build for both architectures
-        CMAKE_OPTS="-DCMAKE_OSX_ARCHITECTURES='arm64;x86_64' -DCMAKE_OSX_DEPLOYMENT_TARGET=12.0"
+        CMAKE_OPTS="-DCMAKE_OSX_ARCHITECTURES='arm64;x86_64' -DCMAKE_OSX_DEPLOYMENT_TARGET=12.0 -DGGML_SVE=OFF -DGGML_NATIVE=OFF"
     elif [ "$BUILD_ARCH" = "arm64" ]; then
-        CMAKE_OPTS="-DCMAKE_OSX_ARCHITECTURES=arm64 -DCMAKE_OSX_DEPLOYMENT_TARGET=12.0"
+        CMAKE_OPTS="-DCMAKE_OSX_ARCHITECTURES=arm64 -DCMAKE_OSX_DEPLOYMENT_TARGET=12.0 -DGGML_SVE=OFF -DGGML_NATIVE=OFF"
     elif [ "$BUILD_ARCH" = "x86_64" ]; then
-        CMAKE_OPTS="-DCMAKE_OSX_ARCHITECTURES=x86_64 -DCMAKE_OSX_DEPLOYMENT_TARGET=12.0 -DWHISPER_COREML=OFF  -DGGML_METAL=OFF -DBUILD_SHARED_LIBS=OFF"
+        CMAKE_OPTS="-DCMAKE_OSX_ARCHITECTURES=x86_64 -DCMAKE_OSX_DEPLOYMENT_TARGET=12.0 -DWHISPER_COREML=OFF  -DGGML_METAL=OFF -DBUILD_SHARED_LIBS=OFF -DGGML_SVE=OFF -DGGML_NATIVE=OFF"
     else
         # Default to native architecture if not specified, still set deployment target
-        CMAKE_OPTS="-DCMAKE_OSX_DEPLOYMENT_TARGET=12.0"
+        CMAKE_OPTS="-DCMAKE_OSX_DEPLOYMENT_TARGET=12.0 -DGGML_SVE=OFF -DGGML_NATIVE=OFF"
     fi
     
     # Build with the appropriate architecture flags
@@ -162,9 +162,28 @@ EOF
     chmod +x run_whisper.sh
     
     # Display architecture information of the built binary
-    echo "Build completed successfully."
-    echo "Binary architecture information:"
-    lipo -info WhisperRecorder
+    echo "✅ Binary built successfully: WhisperRecorder"
+
+    # Verify binary integrity - if lipo fails, the build is corrupted
+    if command -v gtimeout >/dev/null 2>&1; then
+        TIMEOUT_CMD="gtimeout 5"
+    elif command -v timeout >/dev/null 2>&1; then
+        TIMEOUT_CMD="timeout 5"
+    else
+        # Use perl as timeout alternative on macOS
+        TIMEOUT_CMD="perl -e 'alarm 5; exec @ARGV' --"
+    fi
+
+    if $TIMEOUT_CMD lipo -info WhisperRecorder >/dev/null 2>&1; then
+        echo "✅ Binary integrity verified"
+        echo "Build completed successfully"
+    else
+        echo "❌ ERROR: Binary verification failed - build is corrupted!"
+        echo "Removing corrupted binary..."
+        rm -f WhisperRecorder
+        echo "Build FAILED!"
+        exit 1
+    fi
     
     echo "Run './run_whisper.sh' to start the app."
 else

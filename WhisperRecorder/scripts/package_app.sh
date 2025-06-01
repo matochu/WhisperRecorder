@@ -74,9 +74,24 @@ mkdir -p "$FRAMEWORKS"
 # Copy the executable
 cp "WhisperRecorder" "$MACOS/$APP_NAME.bin"
 
-# Show architecture information
+# Show architecture information - if this fails, the build is corrupted
 echo "Binary architecture information:"
-lipo -info "$MACOS/$APP_NAME.bin"
+if command -v gtimeout >/dev/null 2>&1; then
+    TIMEOUT_CMD="gtimeout 5"
+elif command -v timeout >/dev/null 2>&1; then
+    TIMEOUT_CMD="timeout 5"
+else
+    # Use perl as timeout alternative on macOS
+    TIMEOUT_CMD="perl -e 'alarm 5; exec @ARGV' --"
+fi
+
+if ! $TIMEOUT_CMD lipo -info "$MACOS/$APP_NAME.bin" 2>/dev/null; then
+    echo "❌ ERROR: lipo command failed or timed out - binary is corrupted!"
+    echo "Removing corrupted binary and app bundle..."
+    rm -rf "$APP_BUNDLE"
+    rm -f "WhisperRecorder"
+    exit 1
+fi
 
 # Copy dylib files to Frameworks
 cp -R libs/* "$FRAMEWORKS/"

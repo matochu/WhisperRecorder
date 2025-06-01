@@ -1,0 +1,231 @@
+#!/bin/bash
+set -e
+
+echo "🛡️ Safe Build & Packaging WhisperRecorder.app..."
+
+# Colors for output
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+NC='\033[0m' # No Color
+
+# Function to check if any WhisperRecorder processes are running
+check_running_processes() {
+    local running=$(pgrep -f "WhisperRecorder|lipo")
+    if [ -n "$running" ]; then
+        echo -e "${RED}❌ ERROR: WhisperRecorder or lipo processes still running!${NC}"
+        echo "Running processes: $running"
+        echo "Kill them first or restart your Mac"
+        exit 1
+    fi
+}
+
+# Function to create lockfile
+create_lockfile() {
+    local lockfile="/tmp/whisperrecorder-build.lock"
+    if [ -f "$lockfile" ]; then
+        echo -e "${RED}❌ ERROR: Another build is already running!${NC}"
+        echo "If this is wrong, remove: $lockfile"
+        exit 1
+    fi
+    echo $$ > "$lockfile"
+    trap "rm -f $lockfile" EXIT
+}
+
+# Skip checks if called from main whisper script
+if [ "$SKIP_CHECKS" != "1" ]; then
+    echo "1. Checking for running processes..."
+    check_running_processes
+
+    echo "2. Creating build lock..."
+    create_lockfile
+else
+    echo "1. Skipping process checks (called from main script)..."
+fi
+
+echo "3. Cleaning previous builds..."
+rm -rf .build
+rm -f WhisperRecorder
+rm -rf WhisperRecorder.app
+
+# Build Swift app fresh
+echo "4. Building Swift app (safe mode, no parallel jobs)..."
+if [ "$DEBUG_BUILD" = "1" ]; then
+    echo "   🐛 DEBUG BUILD MODE"
+    swift build -c debug --arch arm64 --jobs 1
+    BUILD_CONFIG="debug"
+else
+    echo "   🚀 RELEASE BUILD MODE"
+swift build -c release --arch arm64 --jobs 1
+    BUILD_CONFIG="release"
+fi
+
+# Copy fresh binary
+echo "5. Copying fresh binary..."
+cp ".build/arm64-apple-macosx/$BUILD_CONFIG/WhisperRecorder" .
+
+APP_NAME="WhisperRecorder"
+APP_VERSION="1.3.1"
+
+# Create app bundle structure
+APP_BUNDLE="$APP_NAME.app"
+CONTENTS="$APP_BUNDLE/Contents"
+MACOS="$CONTENTS/MacOS"
+RESOURCES="$CONTENTS/Resources"
+FRAMEWORKS="$CONTENTS/Frameworks"
+
+# Clean and create directories
+rm -rf "$APP_BUNDLE"
+mkdir -p "$MACOS" "$RESOURCES" "$FRAMEWORKS"
+
+# Copy the executable
+echo "6. Packaging executable..."
+cp "WhisperRecorder" "$MACOS/$APP_NAME.bin"
+echo "✅ Binary packaged successfully"
+
+# Copy dylib files to Frameworks (one by one to avoid conflicts)
+echo "7. Copying libraries (safe mode)..."
+if [ -d "libs" ]; then
+    for lib in libs/*.dylib; do
+        if [ -f "$lib" ]; then
+            echo "   Copying $(basename "$lib")..."
+            cp "$lib" "$FRAMEWORKS/"
+        fi
+    done
+else
+    echo -e "${YELLOW}⚠️  Warning: libs directory not found${NC}"
+fi
+
+# Copy KeyboardShortcuts bundle if it exists
+KEYBOARD_SHORTCUTS_BUNDLE=""
+# First try current build config, then fallback to any available
+if [ -n "$BUILD_CONFIG" ] && [ -d ".build/arm64-apple-macosx/$BUILD_CONFIG/KeyboardShortcuts_KeyboardShortcuts.bundle" ]; then
+    KEYBOARD_SHORTCUTS_BUNDLE=".build/arm64-apple-macosx/$BUILD_CONFIG/KeyboardShortcuts_KeyboardShortcuts.bundle"
+else
+    # Fallback to searching all configs
+for BUNDLE_PATH in \
+    ".build/arm64-apple-macosx/debug/KeyboardShortcuts_KeyboardShortcuts.bundle" \
+    ".build/arm64-apple-macosx/release/KeyboardShortcuts_KeyboardShortcuts.bundle"; do
+    if [ -d "$BUNDLE_PATH" ]; then
+        KEYBOARD_SHORTCUTS_BUNDLE="$BUNDLE_PATH"
+        break
+    fi
+done
+fi
+
+if [ -n "$KEYBOARD_SHORTCUTS_BUNDLE" ]; then
+    echo "8. Copying KeyboardShortcuts resources from $KEYBOARD_SHORTCUTS_BUNDLE..."
+    cp -pR "$KEYBOARD_SHORTCUTS_BUNDLE" "$RESOURCES/"
+    echo "✅ KeyboardShortcuts bundle copied"
+fi
+
+# Create Info.plist
+echo "9. Creating Info.plist..."
+cat > "$CONTENTS/Info.plist" << EOF
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>CFBundleExecutable</key>
+    <string>WhisperRecorder</string>
+    <key>CFBundleIdentifier</key>
+    <string>com.whisper.WhisperRecorder</string>
+    <key>CFBundleName</key>
+    <string>$APP_NAME</string>
+    <key>CFBundlePackageType</key>
+    <string>APPL</string>
+    <key>CFBundleShortVersionString</key>
+    <string>$APP_VERSION</string>
+    <key>NSMicrophoneUsageDescription</key>
+    <string>WhisperRecorder needs access to your microphone to record audio for transcription.</string>
+    <key>LSUIElement</key>
+    <true/>
+    <key>LSEnvironment</key>
+    <dict>
+        <key>WHISPER_APP_BUNDLE</key>
+        <string>1</string>
+        <key>WHISPER_RESOURCES_PATH</key>
+        <string>@executable_path/../Resources</string>
+    </dict>
+</dict>
+</plist>
+EOF
+
+# Create launcher shell script
+echo "10. Creating launcher shell script..."
+cat > "$MACOS/$APP_NAME.sh" << EOF
+#!/bin/bash
+DIR="\$( cd "\$( dirname "\${BASH_SOURCE[0]}" )" && pwd )"
+FRAMEWORKS="\$DIR/../Frameworks"
+export DYLD_LIBRARY_PATH="\$FRAMEWORKS:\$DYLD_LIBRARY_PATH"
+export WHISPER_APP_BUNDLE=1
+export WHISPER_RESOURCES_PATH="\$DIR/../Resources"
+exec "\$DIR/$APP_NAME.bin"
+EOF
+chmod +x "$MACOS/$APP_NAME.sh"
+
+# Create C launcher
+echo "11. Creating C launcher..."
+cat > launcher.c << EOF
+#include <stdlib.h>
+#include <stdio.h>
+#include <unistd.h>
+#include <string.h>
+#include <libgen.h>
+#include <mach-o/dyld.h>
+
+int main(int argc, char *argv[]) {
+    char path[1024];
+    uint32_t size = sizeof(path);
+    
+    if (_NSGetExecutablePath(path, &size) == 0) {
+        char dir_path[1024];
+        strcpy(dir_path, path);
+        char *dir = dirname(dir_path);
+        
+        char exec_path[1024];
+        snprintf(exec_path, sizeof(exec_path), "%s/WhisperRecorder.sh", dir);
+        
+        setenv("WHISPER_APP_BUNDLE", "1", 1);
+        setenv("WHISPER_RESOURCES_PATH", "@executable_path/../Resources", 1);
+        
+        char *args[2];
+        args[0] = exec_path;
+        args[1] = NULL;
+        
+        execv(exec_path, args);
+    }
+    
+    return 1;
+}
+EOF
+
+# Compile launcher
+echo "12. Compiling launcher..."
+gcc -mmacosx-version-min=12.0 -arch arm64 -o "$MACOS/$APP_NAME" launcher.c
+
+# Fix library paths
+echo "13. Fixing library paths..."
+install_name_tool -add_rpath "@executable_path/../Frameworks" "$MACOS/$APP_NAME.bin"
+
+echo "14. Updating dylib references..."
+for lib in "$FRAMEWORKS"/*.dylib; do
+    if [ -f "$lib" ]; then
+        basename=$(basename "$lib")
+        echo "   Fixing $basename..."
+        install_name_tool -change "$PWD/libs/$basename" "@rpath/$basename" "$MACOS/$APP_NAME.bin" 2>/dev/null || echo "   (no change needed for $basename)"
+    fi
+done
+
+# Clean up
+echo "15. Cleaning up temporary files..."
+rm -f launcher.c
+rm -f WhisperRecorder
+
+echo -e "${GREEN}✅ WhisperRecorder.app created successfully (safe build)!${NC}"
+echo ""
+echo "🚦 To run safely:"
+echo "   open WhisperRecorder.app"
+echo ""
+echo "💡 To check for hangs:"
+echo "   watch 'ps aux | grep WhisperRecorder'" 

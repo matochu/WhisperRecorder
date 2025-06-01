@@ -17,8 +17,18 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     var toastWindow: ToastWindow?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        #if DEBUG
+        print("🐛 [MAIN] COMPILED IN DEBUG MODE!")
+        #else
+        print("🚀 [MAIN] COMPILED IN RELEASE MODE!")
+        #endif
+        
         // Initialize debug manager first
         _ = DebugManager.shared
+        
+        // TEST APP CATEGORY
+        logInfo(.app, "🔄 TEST APP CATEGORY - checking if APP logs work")
+        print("🎯 [MAIN] Testing APP category logging...")
         
         // Log startup information using new debug system
         logInfo(.system, "=====================================================")
@@ -95,10 +105,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             self.updateMenuBar()
         }
 
-        // Make app not appear in dock
-        logInfo(.system, "Setting activation policy")
-        // NSApp.setActivationPolicy(.accessory)
-        logWarning(.system, "NOT setting accessory policy - app will appear in dock for debugging")
+        // Make app visible in dock for easier debugging
+        logInfo(.system, "Setting activation policy to regular (visible in dock)")
+        NSApp.setActivationPolicy(.regular)
 
         // Set up status item in the menu bar
         logInfo(.ui, "Setting up menu bar")
@@ -158,21 +167,32 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     private func setupToastWindow() {
         toastWindow = ToastWindow()
         print("🎯 [MAIN] ToastWindow created: \(toastWindow != nil)")
+        print("🎯 [MAIN] ToastWindow address: \(Unmanaged.passUnretained(toastWindow!).toOpaque())")
         
         // Observe ToastManager state changes
         let cancellable = ToastManager.shared.$isShowing
             .sink { [weak self] isShowing in
+                print("🎯 [MAIN] === TOAST OBSERVER TRIGGERED ===")
                 print("🎯 [MAIN] Toast isShowing changed to: \(isShowing)")
+                print("🎯 [MAIN] ToastManager message: '\(ToastManager.shared.message)'")
+                print("🎯 [MAIN] ToastManager position: \(ToastManager.shared.position)")
+                print("🎯 [MAIN] ToastWindow exists: \(self?.toastWindow != nil)")
+                print("🎯 [MAIN] Thread: \(Thread.isMainThread ? "Main" : "Background")")
+                
                 DispatchQueue.main.async {
+                    print("🎯 [MAIN] In main queue - updating toast content")
                     self?.toastWindow?.updateToastContent()
                     
                     if isShowing {
-                        print("🎯 [MAIN] Showing toast at position: \(ToastManager.shared.position)")
+                        print("🎯 [MAIN] About to show toast at position: \(ToastManager.shared.position)")
                         self?.toastWindow?.showToastAtPosition(ToastManager.shared.position)
+                        print("🎯 [MAIN] showToastAtPosition called")
                     } else {
-                        print("🎯 [MAIN] Hiding toast")
+                        print("🎯 [MAIN] About to hide toast")
                         self?.toastWindow?.orderOut(nil)
+                        print("🎯 [MAIN] orderOut called")
                     }
+                    print("🎯 [MAIN] === OBSERVER COMPLETE ===")
                 }
             }
         

@@ -36,7 +36,15 @@ class AudioRecorder: NSObject, ObservableObject {
     // Writing style selection
     @Published var selectedWritingStyle: WritingStyle = WritingStyle.styles[0]  // Default style
     @Published private(set) var isReformattingWithGemini = false
-    @Published var autoPasteEnabled: Bool = true  // Add auto-paste control
+    
+    // Auto-paste control with persistence
+    @Published var autoPasteEnabled: Bool {
+        didSet {
+            print("🎯 [AUTO-PASTE] autoPasteEnabled changed: \(oldValue) → \(autoPasteEnabled)")
+            UserDefaults.standard.set(autoPasteEnabled, forKey: "whisperAutoPasteEnabled")
+            print("🎯 [AUTO-PASTE] Saved to UserDefaults successfully")
+        }
+    }
 
     // Status update callback
     var onStatusUpdate: (() -> Void)?
@@ -75,22 +83,29 @@ class AudioRecorder: NSObject, ObservableObject {
         return whisperWrapper.isModelLoaded()
     }
 
-    private override init() {
+    override init() {
+        // Initialize auto-paste setting from UserDefaults
+        self.autoPasteEnabled = UserDefaults.standard.object(forKey: "whisperAutoPasteEnabled") as? Bool ?? true
+        
         super.init()
-        logInfo(.audio, "AudioRecorder initializing")
+        print("🎯 [INIT] AudioRecorder initializing")
+        
+        // TEST APP CATEGORY
+        DebugManager.shared.log(.app, .info, "🔄 TEST AudioRecorder initialization")
+        print("🎯 [INIT] Testing APP category in AudioRecorder...")
 
         // Check Application Support directory for the app
         let appSupport = FileManager.default.urls(
             for: .applicationSupportDirectory, in: .userDomainMask)[0]
             .appendingPathComponent("WhisperRecorder")
-        logDebug(.storage, "Application Support directory: \(appSupport.path)")
+        print("🎯 [INIT] Application Support directory: \(appSupport.path)")
         if !FileManager.default.fileExists(atPath: appSupport.path) {
             do {
                 try FileManager.default.createDirectory(
                     at: appSupport, withIntermediateDirectories: true)
-                logInfo(.storage, "Created Application Support directory")
+                print("🎯 [INIT] Created Application Support directory")
             } catch {
-                logError(.storage, "Failed to create Application Support directory: \(error)")
+                print("🎯 [INIT] Failed to create Application Support directory: \(error)")
             }
         }
 
@@ -99,20 +114,20 @@ class AudioRecorder: NSObject, ObservableObject {
 
         // Check if notifications are available
         if Bundle.main.bundleIdentifier != nil {
-            logInfo(.system, "Requesting notification permissions")
+            print("🎯 [INIT] Requesting notification permissions")
             UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound]) {
                 granted, error in
                 if let error = error {
-                    logError(.system, "Error requesting notification permission: \(error)")
+                    print("🎯 [INIT] Error requesting notification permission: \(error)")
                 } else if granted {
-                    logInfo(.system, "Notification permission granted")
+                    print("🎯 [INIT] Notification permission granted")
                     self.notificationsAvailable = true
                 } else {
-                    logWarning(.system, "Notification permission denied")
+                    print("🎯 [INIT] Notification permission denied")
                 }
             }
         } else {
-            logWarning(.system, "Running without bundle identifier, notifications disabled")
+            print("🎯 [INIT] Running without bundle identifier, notifications disabled")
         }
 
         // Register for model download progress updates
@@ -129,7 +144,12 @@ class AudioRecorder: NSObject, ObservableObject {
         }
         
         // Set up permission monitoring
+        print("🎯 [INIT] 🔄 [SETUP] Setting up permission monitoring...")
         setupPermissionMonitoring()
+        print("✅ [INIT] setupPermissionMonitoring() completed")
+
+        print("🎯 [AUTO-PASTE] AudioRecorder initialized - autoPasteEnabled: \(autoPasteEnabled)")
+        print("✅ [INIT] AudioRecorder initialization completed")
     }
 
     deinit {
@@ -142,7 +162,7 @@ class AudioRecorder: NSObject, ObservableObject {
     // Getter for audioEngine - initializes on first access
     private func getAudioEngine() -> AVAudioEngine? {
         if _audioEngine == nil {
-            logDebug(.audio, "Lazily initializing AVAudioEngine")
+            print("🎯 [INIT] Lazily initializing AVAudioEngine")
             _audioEngine = AVAudioEngine()
         }
         return _audioEngine
@@ -152,13 +172,13 @@ class AudioRecorder: NSObject, ObservableObject {
     private func getInputNode() -> AVAudioInputNode? {
         if _inputNode == nil {
             guard let engine = getAudioEngine() else {
-                logError(.audio, "Cannot initialize inputNode without audioEngine")
+                print("🎯 [INIT] Cannot initialize inputNode without audioEngine")
                 return nil
             }
-            logDebug(.audio, "Lazily initializing AVAudioInputNode")
+            print("🎯 [INIT] Lazily initializing AVAudioInputNode")
             _inputNode = engine.inputNode
             if _inputNode == nil {
-                logError(.audio, "Failed to get input node from audio engine during lazy init.")
+                print("🎯 [INIT] Failed to get input node from audio engine during lazy init.")
             }
         }
         return _inputNode
@@ -166,13 +186,13 @@ class AudioRecorder: NSObject, ObservableObject {
 
     private func setupAudioTap() {
         guard let inputNode = getInputNode() else {  // Changed to use getter
-            logError(.audio, "Failed to get input node for setupAudioTap")
+            print("🎯 [INIT] Failed to get input node for setupAudioTap")
             return
         }
 
         // Get the native format from the input hardware
         let nativeFormat = inputNode.inputFormat(forBus: 0)
-        logDebug(.audio, "Native audio format: \(nativeFormat)")
+        print("🎯 [INIT] Native audio format: \(nativeFormat)")
 
         // Create a format for the converter output that matches what whisper.cpp expects
         let whisperFormat = AVAudioFormat(
@@ -182,118 +202,133 @@ class AudioRecorder: NSObject, ObservableObject {
             interleaved: false)
 
         guard let whisperFormat = whisperFormat else {
-            logError(.audio, "Failed to create whisper audio format")
+            print("🎯 [INIT] Failed to create whisper audio format")
             return
         }
 
-        logDebug(.audio, "Whisper audio format: \(whisperFormat)")
+        print("🎯 [INIT] Whisper audio format: \(whisperFormat)")
 
         // Install tap using the native hardware format
         // Will resample in the callback to 16kHz for Whisper
-        logDebug(.audio, "Installing audio tap")
+        print("🎯 [INIT] Installing audio tap")
+        
+        // Add timeout protection for audio tap
+        let tapQueue = DispatchQueue(label: "audio.tap.queue", qos: .userInitiated)
+        
         inputNode.installTap(onBus: 0, bufferSize: 4096, format: nativeFormat) {
             [weak self] buffer, time in
             guard let self = self, self.isRecording else { return }
+            
+            // Protection: Skip processing if buffer seems corrupted or too large
+            guard buffer.frameLength > 0 && buffer.frameLength < 65536 else {
+                print("🎯 [INIT] Suspicious buffer size: \(buffer.frameLength), skipping")
+                return
+            }
 
-            // Create a converter to Whisper's format if needed
-            if nativeFormat.sampleRate != self.sampleRate {
-                // Create a new AVAudioConverter to convert the sample rate
-                guard let converter = AVAudioConverter(from: nativeFormat, to: whisperFormat) else {
-                    logError(.audio, "Failed to create audio converter")
-                    return
+            // Use dispatch to prevent blocking the audio thread
+            tapQueue.async {
+                self.processAudioBuffer(buffer: buffer, nativeFormat: nativeFormat, whisperFormat: whisperFormat)
+            }
+        }
+    }
+    
+    private func processAudioBuffer(buffer: AVAudioPCMBuffer, nativeFormat: AVAudioFormat, whisperFormat: AVAudioFormat) {
+        // Create a converter to Whisper's format if needed
+        if nativeFormat.sampleRate != self.sampleRate {
+            // Create a new AVAudioConverter to convert the sample rate
+            guard let converter = AVAudioConverter(from: nativeFormat, to: whisperFormat) else {
+                print("🎯 [INIT] Failed to create audio converter")
+                return
+            }
+
+            // Calculate the new frame count based on the ratio of sample rates
+            let ratio = Double(whisperFormat.sampleRate) / Double(nativeFormat.sampleRate)
+            let frameCount = AVAudioFrameCount(Double(buffer.frameLength) * ratio)
+
+            guard
+                let convertedBuffer = AVAudioPCMBuffer(
+                    pcmFormat: whisperFormat, frameCapacity: frameCount)
+            else {
+                print("🎯 [INIT] Failed to create output buffer for conversion")
+                return
+            }
+
+            // Perform the conversion
+            var error: NSError?
+            let inputBlock: AVAudioConverterInputBlock = { inNumPackets, outStatus in
+                outStatus.pointee = .haveData
+                return buffer
+            }
+
+            converter.convert(to: convertedBuffer, error: &error, withInputFrom: inputBlock)
+
+            if let error = error {
+                print("🎯 [INIT] Error converting audio: \(error)")
+                return
+            }
+
+            // Process the converted buffer
+            if let channelData = convertedBuffer.floatChannelData,
+                convertedBuffer.frameLength > 0
+            {
+                let channelDataValue = channelData.pointee
+                let frames = convertedBuffer.frameLength
+
+                // Append the converted audio data to our buffer
+                var samples = [Float](repeating: 0, count: Int(frames))
+                for i in 0..<Int(frames) {
+                    samples[i] = channelDataValue[i]
+                }
+                
+                // Use main queue to safely modify the buffer
+                DispatchQueue.main.async {
+                    self.appendToAudioBuffer(samples: samples)
+                }
+            }
+        } else {
+            // No conversion needed, process directly
+            if let channelData = buffer.floatChannelData, buffer.frameLength > 0 {
+                let channelDataValue = channelData.pointee
+                let frames = buffer.frameLength
+
+                // Append the audio data to our buffer
+                var samples = [Float](repeating: 0, count: Int(frames))
+                for i in 0..<Int(frames) {
+                    samples[i] = channelDataValue[i]
                 }
 
-                // Calculate the new frame count based on the ratio of sample rates
-                let ratio = Double(whisperFormat.sampleRate) / Double(nativeFormat.sampleRate)
-                let frameCount = AVAudioFrameCount(Double(buffer.frameLength) * ratio)
-
-                guard
-                    let convertedBuffer = AVAudioPCMBuffer(
-                        pcmFormat: whisperFormat, frameCapacity: frameCount)
-                else {
-                    logError(.audio, "Failed to create output buffer for conversion")
-                    return
-                }
-
-                // Perform the conversion
-                var error: NSError?
-                let inputBlock: AVAudioConverterInputBlock = { inNumPackets, outStatus in
-                    outStatus.pointee = .haveData
-                    return buffer
-                }
-
-                converter.convert(to: convertedBuffer, error: &error, withInputFrom: inputBlock)
-
-                if let error = error {
-                    logError(.audio, "Error converting audio: \(error)")
-                    return
-                }
-
-                // Process the converted buffer
-                if let channelData = convertedBuffer.floatChannelData,
-                    convertedBuffer.frameLength > 0
-                {
-                    let channelDataValue = channelData.pointee
-                    let frames = convertedBuffer.frameLength
-
-                    // Append the converted audio data to our buffer
-                    var samples = [Float](repeating: 0, count: Int(frames))
-                    for i in 0..<Int(frames) {
-                        samples[i] = channelDataValue[i]
-                    }
-
-                    self.audioBuffer.append(contentsOf: samples)
-
-                    // Check if buffer exceeds maximum size and trim if needed
-                    if self.audioBuffer.count > self.maxBufferSize {
-                        logInfo(.audio,
-                            "Audio buffer exceeding maximum size (\(self.maxBufferSize) samples), trimming oldest data"
-                        )
-                        self.audioBuffer = Array(self.audioBuffer.suffix(self.maxBufferSize))
-                    }
-
-                    // Periodically log buffer size to avoid too many log entries
-                    if self.audioBuffer.count % 16000 == 0 {  // Log roughly every second
-                        logInfo(.audio,
-                            "Audio buffer size: \(self.audioBuffer.count) samples (\(self.audioBuffer.count / 16000) seconds)"
-                        )
-                    }
-                }
-            } else {
-                // No conversion needed, process directly
-                if let channelData = buffer.floatChannelData, buffer.frameLength > 0 {
-                    let channelDataValue = channelData.pointee
-                    let frames = buffer.frameLength
-
-                    // Append the audio data to our buffer
-                    var samples = [Float](repeating: 0, count: Int(frames))
-                    for i in 0..<Int(frames) {
-                        samples[i] = channelDataValue[i]
-                    }
-
-                    self.audioBuffer.append(contentsOf: samples)
-
-                    // Check if buffer exceeds maximum size and trim if needed
-                    if self.audioBuffer.count > self.maxBufferSize {
-                        logInfo(.audio,
-                            "Audio buffer exceeding maximum size (\(self.maxBufferSize) samples), trimming oldest data"
-                        )
-                        self.audioBuffer = Array(self.audioBuffer.suffix(self.maxBufferSize))
-                    }
-
-                    // Periodically log buffer size
-                    if self.audioBuffer.count % 16000 == 0 {
-                        logInfo(.audio,
-                            "Audio buffer size: \(self.audioBuffer.count) samples (\(self.audioBuffer.count / 16000) seconds)"
-                        )
-                    }
+                // Use main queue to safely modify the buffer
+                DispatchQueue.main.async {
+                    self.appendToAudioBuffer(samples: samples)
                 }
             }
         }
     }
+    
+    private func appendToAudioBuffer(samples: [Float]) {
+        // Protect against runaway buffer growth
+        guard audioBuffer.count < maxBufferSize * 2 else {
+            print("🎯 [INIT] Audio buffer critically oversized (\(audioBuffer.count)), stopping recording")
+            stopRecording()
+            return
+        }
+        
+        audioBuffer.append(contentsOf: samples)
+
+        // Check if buffer exceeds maximum size and trim if needed
+        if self.audioBuffer.count > self.maxBufferSize {
+            print("🎯 [INIT] Audio buffer exceeding maximum size (\(self.maxBufferSize) samples), trimming oldest data")
+            self.audioBuffer = Array(self.audioBuffer.suffix(self.maxBufferSize))
+        }
+
+        // Reduce logging frequency to prevent log spam
+        if self.audioBuffer.count % 160000 == 0 {  // Log every 10 seconds instead of every second
+            print("🎯 [INIT] Audio buffer size: \(self.audioBuffer.count) samples (\(self.audioBuffer.count / 16000) seconds)")
+        }
+    }
 
     private func showPermissionAlert() {
-        logInfo(.audio, "Showing microphone permission alert")
+        print("🎯 [INIT] Showing microphone permission alert")
         let alert = NSAlert()
         alert.messageText = "Microphone Access Required"
         alert.informativeText =
@@ -311,11 +346,11 @@ class AudioRecorder: NSObject, ObservableObject {
     }
 
     func toggleRecording() {
-        logInfo(.audio, "Toggle recording called")
+        print("🎯 [INIT] Toggle recording called")
 
         // Check if model is available first
         if !whisperWrapper.isModelLoaded() {
-            logInfo(.audio, "Cannot record: no whisper model loaded")
+            print("🎯 [INIT] Cannot record: no whisper model loaded")
             lastTranscription = "Please download a Whisper model first"
             statusDescription = "No model available"
             onStatusUpdate?()
@@ -340,16 +375,16 @@ class AudioRecorder: NSObject, ObservableObject {
     }
 
     private func startRecording() {
-        logInfo(.audio, "Starting recording")
+        print("🎯 [INIT] Starting recording")
 
         // Check microphone permission status for macOS
         switch AVCaptureDevice.authorizationStatus(for: .audio) {
         case .authorized:
-            logInfo(.audio, "Microphone permission granted")
+            print("🎯 [INIT] Microphone permission granted")
             // Proceed with recording
             self.actuallyStartRecording()
         case .denied:
-            logInfo(.audio, "Microphone permission denied")
+            print("🎯 [INIT] Microphone permission denied")
             // Show an alert to the user
             DispatchQueue.main.async {
                 self.showPermissionAlert()
@@ -359,19 +394,19 @@ class AudioRecorder: NSObject, ObservableObject {
             return
         case .notDetermined:
             guard !isRequestingMicPermission else {
-                logInfo(.audio, "Microphone permission request already in progress.")
+                print("🎯 [INIT] Microphone permission request already in progress.")
                 return
             }
-            logInfo(.audio, "Microphone permission undetermined, requesting...")
+            print("🎯 [INIT] Microphone permission undetermined, requesting...")
             isRequestingMicPermission = true
             AVCaptureDevice.requestAccess(for: .audio) { [weak self] granted in
                 DispatchQueue.main.async {
                     self?.isRequestingMicPermission = false  // Reset flag here
                     if granted {
-                        logInfo(.audio, "Microphone permission granted after request")
+                        print("🎯 [INIT] Microphone permission granted after request")
                         self?.actuallyStartRecording()
                     } else {
-                        logInfo(.audio, "Microphone permission denied after request")
+                        print("🎯 [INIT] Microphone permission denied after request")
                         self?.showPermissionAlert()
                         self?.statusDescription = "Mic permission denied"
                         self?.onStatusUpdate?()
@@ -380,7 +415,7 @@ class AudioRecorder: NSObject, ObservableObject {
             }
             return
         case .restricted:  // macOS specific case
-            logInfo(.audio, "Microphone permission restricted")
+            print("🎯 [INIT] Microphone permission restricted")
             // Show an alert to the user, similar to denied
             DispatchQueue.main.async {
                 self.showPermissionAlert()  // Or a more specific alert for restricted access
@@ -389,7 +424,7 @@ class AudioRecorder: NSObject, ObservableObject {
             }
             return
         @unknown default:
-            logInfo(.audio, "Unknown microphone permission status")
+            print("🎯 [INIT] Unknown microphone permission status")
             // Handle appropriately, perhaps by showing an error
             DispatchQueue.main.async {
                 self.showRecordingErrorAlert()
@@ -401,7 +436,11 @@ class AudioRecorder: NSObject, ObservableObject {
     }
 
     private func actuallyStartRecording() {
-        logInfo(.audio, "Actually starting recording")
+        print("🎯 [INIT] Actually starting recording")
+        
+        // Hide any existing toast when starting new recording
+        ToastManager.shared.hideToastForNewRecording()
+        
         // Reset audio buffer
         audioBuffer = []
         recordingDurationSeconds = 0
@@ -417,44 +456,75 @@ class AudioRecorder: NSObject, ObservableObject {
             self.onStatusUpdate?()
         }
 
-        do {
-            guard let audioEngine = getAudioEngine() else {  // Changed to use getter
-                logError(.audio, "Audio engine not initialized (lazy init failed)")
-                return
+        // Use timeout protection for audio engine startup
+        let timeoutSeconds: TimeInterval = 5.0
+        let group = DispatchGroup()
+        group.enter()
+        
+        var startupSuccess = false
+        var startupError: Error?
+        
+        DispatchQueue.global(qos: .userInitiated).async {
+            do {
+                guard let audioEngine = self.getAudioEngine() else {
+                    throw NSError(domain: "AudioRecorder", code: 1, userInfo: [NSLocalizedDescriptionKey: "Audio engine not initialized (lazy init failed)"])
+                }
+
+                // If the audio engine is already running, stop it first
+                if audioEngine.isRunning {
+                    print("🎯 [INIT] Audio engine already running, stopping it first")
+                    audioEngine.stop()
+                }
+
+                // Remove any existing taps
+                print("🎯 [INIT] Removing existing tap")
+                self.getInputNode()?.removeTap(onBus: 0)
+
+                // Set up the audio tap
+                print("🎯 [INIT] Setting up audio tap")
+                self.setupAudioTap()
+
+                // Prepare and start the audio engine
+                print("🎯 [INIT] Starting audio engine")
+                audioEngine.prepare()
+                try audioEngine.start()
+                
+                startupSuccess = true
+                group.leave()
+            } catch {
+                startupError = error
+                group.leave()
             }
-
-            // If the audio engine is already running, stop it first
-            if audioEngine.isRunning {
-                logInfo(.audio, "Audio engine already running, stopping it first")
-                audioEngine.stop()
+        }
+        
+        let result = group.wait(timeout: .now() + timeoutSeconds)
+        
+        DispatchQueue.main.async {
+            if result == .timedOut {
+                print("🎯 [INIT] Audio engine startup timed out after \(timeoutSeconds)s")
+                // Clean up on timeout
+                self.recordingTimer?.invalidate()
+                self.recordingTimer = nil
+                self.systemAudioManager.unmuteSystemAudio()
+                self.showRecordingErrorAlert(error: NSError(domain: "AudioRecorder", code: 2, userInfo: [NSLocalizedDescriptionKey: "Audio engine startup timed out"]))
+            } else if startupSuccess {
+                self.isRecording = true
+                self.statusDescription = "Recording..."
+                print("🎯 [INIT] Recording started successfully")
+                self.onStatusUpdate?()
+            } else {
+                print("🎯 [INIT] Failed to start audio engine: \(startupError?.localizedDescription ?? "unknown error")")
+                // If recording failed, restore system audio
+                self.recordingTimer?.invalidate()
+                self.recordingTimer = nil
+                self.systemAudioManager.unmuteSystemAudio()
+                self.showRecordingErrorAlert(error: startupError)
             }
-
-            // Remove any existing taps
-            logInfo(.audio, "Removing existing tap")
-            getInputNode()?.removeTap(onBus: 0)  // Changed to use getter
-
-            // Set up the audio tap
-            logInfo(.audio, "Setting up audio tap")  // Changed comment
-            setupAudioTap()
-
-            // Prepare and start the audio engine
-            logInfo(.audio, "Starting audio engine")
-            audioEngine.prepare()
-            try audioEngine.start()
-            isRecording = true
-            statusDescription = "Recording..."
-            logInfo(.audio, "Recording started successfully")
-            onStatusUpdate?()
-        } catch {
-            logError(.audio, "Failed to start audio engine: \(error)")
-            // If recording failed, restore system audio
-            systemAudioManager.unmuteSystemAudio()
-            showRecordingErrorAlert(error: error)
         }
     }
 
     private func showRecordingErrorAlert(error: Error? = nil) {
-        logError(.audio, "Showing recording error alert: \(error?.localizedDescription ?? "unknown error")")
+        print("🎯 [INIT] Showing recording error alert: \(error?.localizedDescription ?? "unknown error")")
         let alert = NSAlert()
         alert.messageText = "Recording Error"
         if let error = error {
@@ -468,7 +538,7 @@ class AudioRecorder: NSObject, ObservableObject {
     }
 
     private func stopRecording() {
-        logInfo(.audio, "Stopping recording")
+        print("🎯 [INIT] Stopping recording")
         // Stop the audio engine and remove tap
         getAudioEngine()?.stop()  // Changed to use getter
         getInputNode()?.removeTap(onBus: 0)  // Changed to use getter
@@ -482,21 +552,21 @@ class AudioRecorder: NSObject, ObservableObject {
         systemAudioManager.unmuteSystemAudio()
 
         statusDescription = "Ready"
-        logInfo(.audio, "Recording stopped. Buffer size: \(audioBuffer.count) samples")
+        print("🎯 [INIT] Recording stopped. Buffer size: \(audioBuffer.count) samples")
         onStatusUpdate?()
 
         // Process the audio buffer
         if !audioBuffer.isEmpty {
-            logInfo(.audio, "Transcribing \(audioBuffer.count) PCM samples directly")
+            print("🎯 [INIT] Transcribing \(audioBuffer.count) PCM samples directly")
             transcribeAudioBuffer()
         } else {
-            logInfo(.audio, "No audio data recorded")
+            print("🎯 [INIT] No audio data recorded")
         }
     }
 
     private func transcribeAudioBuffer() {
-        logInfo(.audio, "Starting transcription pipeline")
-        logDebug(.audio, "Audio buffer contains \(audioBuffer.count) samples")
+        print("🎯 [INIT] Starting transcription pipeline")
+        print("🎯 [INIT] Audio buffer contains \(audioBuffer.count) samples")
         
         startTiming("transcription_pipeline")
         isTranscribing = true
@@ -509,7 +579,7 @@ class AudioRecorder: NSObject, ObservableObject {
 
             // Verify that the buffer is not empty
             guard !self.audioBuffer.isEmpty else {
-                logError(.audio, "❌ Error: Audio buffer is empty")
+                print("🎯 [INIT] ❌ Error: Audio buffer is empty")
                 DispatchQueue.main.async {
                     self.isTranscribing = false
                     self.statusDescription = "Ready"
@@ -520,45 +590,45 @@ class AudioRecorder: NSObject, ObservableObject {
             }
 
             // Step 1: Whisper Transcription
-            logInfo(.audio, "🎤 Starting Whisper transcription...")
-            logDebug(.audio, "Sending \(self.audioBuffer.count) samples to Whisper for transcription")
+            print("🎯 [INIT] 🎤 Starting Whisper transcription...")
+            print("🎯 [INIT] Sending \(self.audioBuffer.count) samples to Whisper for transcription")
             
             startTiming("whisper_transcription")
             let transcription = self.whisperWrapper.transcribePCM(audioData: self.audioBuffer)
             let whisperTime = endTiming("whisper_transcription")
             
-            logInfo(.audio, "✅ Whisper transcription completed in \(String(format: "%.3f", whisperTime ?? 0))s")
-            logInfo(.audio, "📝 Raw Whisper output: \"\(transcription)\"")
-            logDebug(.audio, "Raw transcription length: \(transcription.count) characters")
+            print("🎯 [INIT] ✅ Whisper transcription completed in \(String(format: "%.3f", whisperTime ?? 0))s")
+            print("🎯 [INIT] 📝 Raw Whisper output: \"\(transcription)\"")
+            print("🎯 [INIT] Raw transcription length: \(transcription.count) characters")
 
             // Store the original Whisper transcription
             AppDelegate.lastOriginalWhisperText = transcription
-            logDebug(.storage, "Stored original Whisper text: \(transcription.count) characters")
+            print("🎯 [INIT] Stored original Whisper text: \(transcription.count) characters")
 
             // Step 2: Check if we need reformatting or translation
             let currentTargetLang = WritingStyleManager.shared.currentTargetLanguage
             let noTranslateValue = WritingStyleManager.shared.noTranslate
             
-            logDebug(.llm, "Current settings check:")
-            logDebug(.llm, "  - Writing style: \(self.selectedWritingStyle.name) (\(self.selectedWritingStyle.id))")
-            logDebug(.llm, "  - Target language: \(currentTargetLang)")
-            logDebug(.llm, "  - No-translate value: \(noTranslateValue)")
-            logDebug(.llm, "  - Needs style formatting: \(self.selectedWritingStyle.id != "default")")
-            logDebug(.llm, "  - Needs translation: \(currentTargetLang != noTranslateValue)")
+            print("🎯 [INIT] Current settings check:")
+            print("🎯 [INIT]   - Writing style: \(self.selectedWritingStyle.name) (\(self.selectedWritingStyle.id))")
+            print("🎯 [INIT]   - Target language: \(currentTargetLang)")
+            print("🎯 [INIT]   - No-translate value: \(noTranslateValue)")
+            print("🎯 [INIT]   - Needs style formatting: \(self.selectedWritingStyle.id != "default")")
+            print("🎯 [INIT]   - Needs translation: \(currentTargetLang != noTranslateValue)")
             
             let needsProcessing = self.selectedWritingStyle.id != "default" || 
                                  currentTargetLang != noTranslateValue
             
             if !needsProcessing {
-                logInfo(.audio, "📋 Using default style and no translation - no reformatting needed")
+                print("🎯 [INIT] 📋 Using default style and no translation - no reformatting needed")
                 self.lastTranscription = transcription
                 
                 // Store as processed text even though it's the same as original
                 AppDelegate.lastProcessedText = transcription
-                logDebug(.storage, "Stored processed text (same as original): \(transcription.count) characters")
+                print("🎯 [INIT] Stored processed text (same as original): \(transcription.count) characters")
                 
                 let totalTime = endTiming("transcription_pipeline")
-                logInfo(.performance, "🏁 Total pipeline time: \(String(format: "%.3f", totalTime ?? 0))s (Whisper only)")
+                print("🎯 [INIT] 🏁 Total pipeline time: \(String(format: "%.3f", totalTime ?? 0))s (Whisper only)")
 
                 // Copy to clipboard
                 DispatchQueue.main.async {
@@ -566,7 +636,7 @@ class AudioRecorder: NSObject, ObservableObject {
                     self.isTranscribing = false
                     self.statusDescription = "Ready"
                     self.onStatusUpdate?()
-                    logInfo(.audio, "✅ Transcription pipeline complete (no processing needed)")
+                    print("🎯 [INIT] ✅ Transcription pipeline complete (no processing needed)")
 
                     // Show notification if available
                     if self.notificationsAvailable {
@@ -585,10 +655,10 @@ class AudioRecorder: NSObject, ObservableObject {
                 self.onStatusUpdate?()
             }
 
-            logInfo(.audio, "🤖 Starting Gemini processing (style: \(self.selectedWritingStyle.name), translation: \(WritingStyleManager.shared.currentTargetLanguage))...")
-            logInfo(.llm, "Selected writing style: \(self.selectedWritingStyle.name) (\(self.selectedWritingStyle.id))")
-            logInfo(.llm, "Target language: \(WritingStyleManager.supportedLanguages[WritingStyleManager.shared.currentTargetLanguage] ?? WritingStyleManager.shared.currentTargetLanguage)")
-            logInfo(.llm, "Input text for processing: \"\(transcription)\"")
+            print("🎯 [INIT] 🤖 Starting Gemini processing (style: \(self.selectedWritingStyle.name), translation: \(WritingStyleManager.shared.currentTargetLanguage))...")
+            print("🎯 [INIT] Selected writing style: \(self.selectedWritingStyle.name) (\(self.selectedWritingStyle.id))")
+            print("🎯 [INIT] Target language: \(WritingStyleManager.supportedLanguages[WritingStyleManager.shared.currentTargetLanguage] ?? WritingStyleManager.shared.currentTargetLanguage)")
+            print("🎯 [INIT] Input text for processing: \"\(transcription)\"")
             
             startTiming("gemini_processing")
 
@@ -600,15 +670,15 @@ class AudioRecorder: NSObject, ObservableObject {
                 
                 DispatchQueue.main.async {
                     if let reformattedText = reformattedText {
-                        logInfo(.llm, "✅ Gemini processing completed in \(String(format: "%.3f", geminiTime ?? 0))s")
-                        logInfo(.llm, "📝 Reformatted output: \"\(reformattedText)\"")
-                        logInfo(.performance, "🏁 Total pipeline time: \(String(format: "%.3f", totalTime ?? 0))s (Whisper: \(String(format: "%.3f", whisperTime ?? 0))s + Gemini: \(String(format: "%.3f", geminiTime ?? 0))s)")
+                        print("🎯 [INIT] ✅ Gemini processing completed in \(String(format: "%.3f", geminiTime ?? 0))s")
+                        print("🎯 [INIT] 📝 Reformatted output: \"\(reformattedText)\"")
+                        print("🎯 [INIT] 🏁 Total pipeline time: \(String(format: "%.3f", totalTime ?? 0))s (Whisper: \(String(format: "%.3f", whisperTime ?? 0))s + Gemini: \(String(format: "%.3f", geminiTime ?? 0))s)")
                         
                         self.lastTranscription = reformattedText
                         
                         // Store the processed text
                         AppDelegate.lastProcessedText = reformattedText
-                        logDebug(.storage, "Stored processed text: \(reformattedText.count) characters")
+                        print("🎯 [INIT] Stored processed text: \(reformattedText.count) characters")
                         
                         self.copyToClipboard(text: reformattedText)
                         
@@ -618,17 +688,17 @@ class AudioRecorder: NSObject, ObservableObject {
                                 title: "Reformatting Complete")
                         }
                         
-                        logInfo(.audio, "✅ Full transcription pipeline complete with processing")
+                        print("🎯 [INIT] ✅ Full transcription pipeline complete with processing")
                     } else {
                         // If processing failed, use original transcription
-                        logWarning(.llm, "❌ Gemini processing failed, falling back to original transcription")
-                        logInfo(.performance, "🏁 Pipeline completed with fallback - total time: \(String(format: "%.3f", totalTime ?? 0))s")
+                        print("🎯 [INIT] ❌ Gemini processing failed, falling back to original transcription")
+                        print("🎯 [INIT] �� Pipeline completed with fallback - total time: \(String(format: "%.3f", totalTime ?? 0))s")
                         
                         self.lastTranscription = transcription
                         
                         // Store original as processed text since processing failed
                         AppDelegate.lastProcessedText = transcription
-                        logDebug(.storage, "Stored processed text (fallback to original): \(transcription.count) characters")
+                        print("🎯 [INIT] Stored processed text (fallback to original): \(transcription.count) characters")
                         
                         self.copyToClipboard(text: transcription)
                         
@@ -638,7 +708,7 @@ class AudioRecorder: NSObject, ObservableObject {
                                 title: "Processing Failed")
                         }
                         
-                        logInfo(.audio, "✅ Transcription pipeline complete (fallback to original)")
+                        print("🎯 [INIT] ✅ Transcription pipeline complete (fallback to original)")
                     }
 
                     self.isTranscribing = false
@@ -651,13 +721,13 @@ class AudioRecorder: NSObject, ObservableObject {
     }
 
     private func copyToClipboard(text: String) {
-        logInfo(.audio, "🔄 Starting clipboard sequence...")
+        print("🎯 [INIT] 🔄 Starting clipboard sequence...")
         
         let originalText = AppDelegate.lastOriginalWhisperText
         let processedText = text
         
-        logDebug(.audio, "Original text: \(originalText.isEmpty ? "empty" : "\(originalText.count) chars")")
-        logDebug(.audio, "Processed text: \(processedText.isEmpty ? "empty" : "\(processedText.count) chars")")
+        print("🎯 [INIT] Original text: \(originalText.isEmpty ? "empty" : "\(originalText.count) chars")")
+        print("🎯 [INIT] Processed text: \(processedText.isEmpty ? "empty" : "\(processedText.count) chars")")
         
         // If we have processing (translation/style), only copy the final result
         // Only copy both if processing failed and we're falling back to original
@@ -666,135 +736,96 @@ class AudioRecorder: NSObject, ObservableObject {
         
         if needsProcessing && !processedText.isEmpty && processedText != originalText {
             // We have successful processing - only copy the processed text
-            logInfo(.audio, "📄 Using processed text only (translation/style applied)")
+            print("🎯 [INIT] 📄 Using processed text only (translation/style applied)")
             self.copyTextToClipboard(processedText, label: "processed")
         } else if !originalText.isEmpty {
             // No processing or processing failed - copy original only
-            logInfo(.audio, "📄 Using original text (no processing or fallback)")
+            print("🎯 [INIT] 📄 Using original text (no processing or fallback)")
             self.copyTextToClipboard(originalText, label: "original")
         } else {
-            logWarning(.audio, "❌ No text available to copy")
+            print("🎯 [INIT] ❌ No text available to copy")
         }
     }
     
     private func copyTextToClipboard(_ text: String, label: String) {
-        logInfo(.audio, "📋 Copying \(label) text to clipboard: \"\(text.prefix(50))\(text.count > 50 ? "..." : "")\"")
+        print("🎯 [INIT] 📋 Copying \(label) text to clipboard: \"\(text.prefix(50))\(text.count > 50 ? "..." : "")\"")
         
         let pasteboard = NSPasteboard.general
         pasteboard.clearContents()
         let success = pasteboard.setString(text, forType: .string)
         
         if success {
-            logInfo(.audio, "✅ Successfully copied \(label) text (\(text.count) chars)")
+            print("🎯 [INIT] ✅ Successfully copied \(label) text (\(text.count) chars)")
             
             // Verify what's actually in clipboard
             if let clipboardContent = pasteboard.string(forType: .string) {
-                logDebug(.audio, "📋 Clipboard verification: \(clipboardContent.count) chars, matches: \(clipboardContent == text)")
+                print("🎯 [INIT] 📋 Clipboard verification: \(clipboardContent.count) chars, matches: \(clipboardContent == text)")
             }
             
-            // Auto-paste to active input
+            // Show toast notification
+            let toastMessage = label == "processed" ? "Text processed & copied" : "Text copied"
+            ToastManager.shared.showToast(message: toastMessage, preview: text)
+            
+            // Play centralized completion sound when transcription process completes
+            NSSound(named: "Tink")?.play()
+            
+            // Auto-paste to active input (with delay to let toast show)
             if self.autoPasteEnabled {
-                self.autoPasteToActiveInput()
+                // Add delay so toast can be seen before auto-paste triggers key events that hide it
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                    // Prevent toast from hiding during auto-paste
+                    ToastManager.shared.setAutoPasteInProgress(true)
+                    
+                    self.autoPasteToActiveInput()
+                    
+                    // Re-enable toast hiding after auto-paste completes
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
+                        ToastManager.shared.setAutoPasteInProgress(false)
+                    }
+                }
             } else {
-                logDebug(.audio, "Auto-paste disabled by user")
+                print("🎯 [INIT] Auto-paste disabled by user")
             }
         } else {
-            logError(.audio, "❌ Failed to copy \(label) text to clipboard")
+            print("🎯 [INIT] ❌ Failed to copy \(label) text to clipboard")
         }
     }
     
     private func autoPasteToActiveInput() {
         // Check if accessibility permissions are enabled
         guard self.autoPasteEnabled else {
-            logDebug(.audio, "Auto-paste disabled by user")
+            print("🎯 [INIT] Auto-paste disabled by user")
             return
         }
         
         // Check accessibility permissions - silently skip if no permissions
         if !AXIsProcessTrusted() {
-            logInfo(.audio, "❌ Auto-paste skipped - no accessibility permissions")
+            print("🎯 [INIT] ❌ Auto-paste skipped - no accessibility permissions")
             return
         }
         
         // Simply perform paste - try multiple methods with delays
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
-            logInfo(.audio, "🎯 Attempting auto-paste with multiple methods...")
+            print("🎯 [INIT] 🎯 Attempting auto-paste with multiple methods...")
             self.performPaste()
         }
     }
     
-    private func showAccessibilityPermissionAlert() {
-        let alert = NSAlert()
-        alert.messageText = "Accessibility Permissions Required"
-        
-        // Get the actual app bundle path
-        let appBundle = Bundle.main.bundlePath
-        
-        alert.informativeText = """
-        WhisperRecorder needs accessibility permissions to automatically paste transcribed text.
-
-        IMPORTANT: If you launched this app from Terminal or Cursor, you need to:
-        1. Quit this app
-        2. Open the app directly from Finder: \(appBundle)
-        3. Grant permissions when prompted
-        
-        OR manually add the app in System Preferences → Security & Privacy → Privacy → Accessibility
-        
-        Would you like to open System Preferences now?
-        """
-        
-        alert.addButton(withTitle: "Open System Preferences")
-        alert.addButton(withTitle: "Open App Location")
-        alert.addButton(withTitle: "Skip Auto-Paste")
-        alert.addButton(withTitle: "Don't Ask Again")
-        
-        let response = alert.runModal()
-        
-        switch response {
-        case .alertFirstButtonReturn:
-            // Open accessibility preferences
-            if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility") {
-                NSWorkspace.shared.open(url)
-            }
-        case .alertSecondButtonReturn:
-            // Open app location in Finder
-            NSWorkspace.shared.selectFile(appBundle, inFileViewerRootedAtPath: "")
-            logInfo(.system, "Opened app location in Finder: \(appBundle)")
-        case .alertThirdButtonReturn:
-            // Skip Auto-Paste
-            logInfo(.audio, "User chose to skip accessibility permissions for now")
-        default:
-            // Don't ask again - disable auto-paste (fourth button)
-            self.autoPasteEnabled = false
-            logInfo(.audio, "Auto-paste disabled by user choice")
-        }
-    }
-    
     private func performPaste() {
-        // Method 1: Try NSApp sendAction
-        logDebug(.audio, "Method 1: NSApp.sendAction")
+        // Method 1: Try NSApp sendAction (safer approach)
+        print("🎯 [INIT] Method 1: NSApp.sendAction")
         let result1 = NSApp.sendAction(#selector(NSText.paste(_:)), to: nil, from: nil)
-        logDebug(.audio, "NSApp.sendAction result: \(result1)")
+        print("🎯 [INIT] NSApp.sendAction result: \(result1)")
         
-        // Method 2: Try CGEvent immediately
+        // Method 2: Try CGEvent after small delay
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
-            logDebug(.audio, "Method 2: CGEvent")
+            print("🎯 [INIT] Method 2: CGEvent")
             self.sendPasteKeyEvent()
         }
         
-        // Method 3: Try NSApp sendAction to first responder specifically
+        // Method 3: Try AppleScript approach (removed problematic targeted approach)
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
-            logDebug(.audio, "Method 3: Targeted sendAction")
-            if let window = NSApp.keyWindow,
-               let responder = window.firstResponder {
-                logDebug(.audio, "Sending paste to responder: \(type(of: responder))")
-                NSApp.sendAction(#selector(NSText.paste(_:)), to: responder, from: nil)
-            }
-        }
-        
-        // Method 4: Try AppleScript approach
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
-            logDebug(.audio, "Method 4: AppleScript")
+            print("🎯 [INIT] Method 3: AppleScript")
             self.applescriptPaste()
         }
     }
@@ -812,7 +843,7 @@ class AudioRecorder: NSObject, ObservableObject {
                 if let keyUpEvent = CGEvent(keyboardEventSource: source, virtualKey: 9, keyDown: false) {
                     keyUpEvent.flags = .maskCommand
                     keyUpEvent.post(tap: .cghidEventTap)
-                    logDebug(.audio, "CGEvent paste sent")
+                    print("🎯 [INIT] CGEvent paste sent")
                 }
             }
         }
@@ -829,15 +860,15 @@ class AudioRecorder: NSObject, ObservableObject {
             var error: NSDictionary?
             appleScript.executeAndReturnError(&error)
             if let error = error {
-                logDebug(.audio, "AppleScript error: \(error)")
+                print("🎯 [INIT] AppleScript error: \(error)")
             } else {
-                logDebug(.audio, "AppleScript paste executed")
+                print("🎯 [INIT] AppleScript paste executed")
             }
         }
     }
 
     private func showNotification(message: String, title: String = "WhisperRecorder") {
-        logInfo(.system, "Showing notification: \(message)")
+        print("🎯 [INIT] Showing notification: \(message)")
         let content = UNMutableNotificationContent()
         content.title = title
         content.body = message
@@ -847,30 +878,46 @@ class AudioRecorder: NSObject, ObservableObject {
             identifier: UUID().uuidString, content: content, trigger: nil)
         UNUserNotificationCenter.current().add(request) { error in
             if let error = error {
-                logError(.system, "Error showing notification: \(error)")
+                print("🎯 [INIT] Error showing notification: \(error)")
             }
         }
     }
 
     func requestAccessibilityPermissions() {
-        logInfo(.system, "Requesting accessibility permissions...")
+        print("🎯 [INIT] Checking accessibility permissions...")
+        DebugManager.shared.log(.app, .info, "Checking accessibility permissions...")
         
-        // Check if launched from terminal
-        if isLaunchedFromTerminal {
-            logWarning(.system, "⚠️ App launched from terminal/cursor - this may cause permission issues")
-            showAccessibilityPermissionAlert()
-            return
+        // Only check permissions without showing prompt
+        let accessibilityEnabled = AXIsProcessTrusted()
+        
+        if accessibilityEnabled {
+            print("🎯 [INIT] ✅ Accessibility permissions already granted")
+            DebugManager.shared.log(.app, .info, "✅ Accessibility permissions already granted")
+        } else {
+            print("🎯 [INIT] ❌ Accessibility permissions not granted")
+            DebugManager.shared.log(.app, .warning, "❌ Accessibility permissions not granted")
+            print("🎯 [INIT] ℹ️  To enable: System Preferences → Security & Privacy → Privacy → Accessibility")
         }
         
-        // Request accessibility permissions
+        // Update status after check
+        updateAccessibilityPermissionStatus()
+    }
+    
+    // Separate method for UI button that shows system prompt
+    func requestAccessibilityPermissionsWithPrompt() {
+        print("🎯 [UI] User clicked permission button - showing system prompt")
+        DebugManager.shared.log(.app, .info, "User clicked permission button - showing system prompt")
+        
+        // Show system prompt when user explicitly requests it
         let options = [kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true]
         let accessibilityEnabled = AXIsProcessTrustedWithOptions(options as CFDictionary)
         
         if accessibilityEnabled {
-            logInfo(.system, "✅ Accessibility permissions already granted")
+            print("🎯 [UI] ✅ Accessibility permissions already granted")
+            DebugManager.shared.log(.app, .info, "✅ Accessibility permissions granted via prompt")
         } else {
-            logInfo(.system, "❌ Accessibility permissions need to be granted manually")
-            showAccessibilityPermissionAlert()
+            print("🎯 [UI] ❌ System prompt shown - user needs to grant permissions")
+            DebugManager.shared.log(.app, .warning, "❌ System prompt shown - user needs to grant permissions")
         }
         
         // Update status after request
@@ -878,45 +925,49 @@ class AudioRecorder: NSObject, ObservableObject {
     }
     
     private func setupPermissionMonitoring() {
-        logInfo(.system, "Setting up permission monitoring...")
+        print("🎯 [INIT] 🔄 [SETUP] Setting up permission monitoring...")
         
-        // Initial status check
-        updateAccessibilityPermissionStatus()
+        // SIMPLE: Just do one initial check, no monitoring
+        let initialStatus = AXIsProcessTrusted()
+        self.accessibilityPermissionsStatus = initialStatus
+        print("🎯 [INIT] ✅ Initial permission status: \(initialStatus)")
         
-        // Monitor app focus changes only
-        NotificationCenter.default.addObserver(
-            forName: NSApplication.didBecomeActiveNotification,
-            object: nil,
-            queue: .main
-        ) { [weak self] _ in
-            logDebug(.system, "App became active - checking permissions")
-            self?.updateAccessibilityPermissionStatus()
-        }
-        
-        // Remove periodic timer - only manual checks now
+        print("🎯 [INIT] ✅ [SETUP] Permission setup completed (no automatic monitoring)")
     }
     
     func updateAccessibilityPermissionStatus() {
-        let newStatus = AXIsProcessTrusted()
-        let processName = ProcessInfo.processInfo.processName
-        let bundleId = Bundle.main.bundleIdentifier ?? "unknown"
+        print("🔄 [PERMISSIONS] Manual permission check")
+        DebugManager.shared.log(.app, .debug, "Manual accessibility permission check")
         
-        logDebug(.system, "🔍 Permission check: AXIsProcessTrusted() = \(newStatus)")
-        logDebug(.system, "🔍 Process name: \(processName)")
-        logDebug(.system, "🔍 Bundle ID: \(bundleId)")
-        logDebug(.system, "🔍 Current status: \(accessibilityPermissionsStatus)")
+        let newStatus = AXIsProcessTrusted()
+        print("🔍 [PERMISSIONS] AXIsProcessTrusted() = \(newStatus)")
+        DebugManager.shared.log(.app, .info, "AXIsProcessTrusted() result: \(newStatus)")
         
         if newStatus != accessibilityPermissionsStatus {
-            logInfo(.system, "♻️ Accessibility permission status changed: \(accessibilityPermissionsStatus) → \(newStatus)")
+            print("🔄 [PERMISSIONS] STATUS CHANGED: \(accessibilityPermissionsStatus) → \(newStatus)")
+            DebugManager.shared.log(.app, .info, "Permission status changed: \(accessibilityPermissionsStatus) → \(newStatus)")
             DispatchQueue.main.async {
                 self.accessibilityPermissionsStatus = newStatus
-                self.onStatusUpdate?()
+                self.objectWillChange.send()
             }
         } else {
-            // Update without logging for routine checks, but force update UI anyway
-            DispatchQueue.main.async {
-                self.accessibilityPermissionsStatus = newStatus
-            }
+            print("🔄 [PERMISSIONS] Status unchanged: \(accessibilityPermissionsStatus)")
+            DebugManager.shared.log(.app, .debug, "Permission status unchanged: \(accessibilityPermissionsStatus)")
         }
     }
-}
+    
+    private func getParentProcessInfo() -> String {
+        let parentPID = getppid()
+        if let parentName = getProcessName(for: parentPID) {
+            return "\(parentName) (PID: \(parentPID))"
+        }
+        return "unknown (PID: \(parentPID))"
+    }
+    
+    // Public method for manual permission checking (called by UI)
+    func checkPermissionsStatus() {
+        print("🔄 [MANUAL] Manual permission check requested")
+        updateAccessibilityPermissionStatus()
+            }
+        }
+

@@ -1,22 +1,130 @@
 # WhisperRecorder
 
-A menu bar app for macOS that records audio and transcribes it using the Whisper model.
+A macOS menu bar app for voice recording and transcription using OpenAI's Whisper model with AI-powered text enhancement.
 
 ## Features
 
-- Record audio with a keyboard shortcut (default: Command+Shift+R)
-- Transcribe audio using the whisper.cpp library
-- Copy transcription to clipboard
-- Menu bar status indicator
-- Notification when transcription is complete
-- On-demand model download - select the model that works best for you
+- 🎤 **Voice Recording**: Record audio with configurable hotkeys
+- 🤖 **AI Transcription**: Local Whisper model processing
+- 🌍 **Translation**: Automatic translation to multiple languages
+- ✨ **Text Enhancement**: AI-powered text formatting and style improvements
+- 📋 **Smart Clipboard**: Auto-copy and paste functionality
+- 🔄 **Offline Support**: Works completely offline (except for AI enhancement)
+- ⌨️ **Hotkey Support**: Customizable keyboard shortcuts
 
-## Building
+## Quick Start
 
-1. Clone this repository
-2. Make sure you have Swift and Xcode installed
-3. Run `./build.sh` to build the app
-4. Run `./run_whisper.sh` to start the app
+### 🛡️ Safe Building & Running (New!)
+
+We now have a unified, safe-by-default script that prevents process hangs:
+
+```bash
+cd WhisperRecorder
+
+# Build the app (safe mode, no parallel jobs)
+./whisper build
+
+# Run the app (automatic process cleanup)
+./whisper run
+
+# Debug interactively (with terminal output)
+./whisper debug
+
+# Emergency cleanup (kill hanging processes)
+./whisper cleanup
+
+# See all options
+./whisper help
+```
+
+### ⚠️ Legacy Scripts (Deprecated)
+
+Old scripts are now in `scripts/` directory and should not be used directly:
+
+```bash
+# ❌ Old way (can cause hangs)
+./package_manual.sh
+./run.sh
+
+# ✅ New way (safe by default)
+./whisper build
+./whisper run
+```
+
+### Setting Up Permissions
+
+1. **Microphone**: Granted automatically when first recording
+2. **Accessibility** (for auto-paste):
+   - Launch app using `./whisper run`
+   - Click menu bar icon → Configuration panel
+   - Look for "Auto-Paste" status
+   - If needed, click to request permissions
+   - In System Preferences, you should see "WhisperRecorder" (not "Cursor" or "Terminal")
+
+## Troubleshooting
+
+### Process Hangs (UE State)
+
+If you encounter hanging processes that can't be killed with `kill -9`:
+
+```bash
+# Emergency cleanup
+./whisper cleanup
+
+# Check status
+./whisper status
+
+# If cleanup doesn't work, restart your Mac
+sudo reboot
+```
+
+**Causes**: Audio engine hangs, Core Audio daemon issues, lipo conflicts during parallel builds.
+
+**Prevention**: Always use `./whisper` commands instead of old scripts.
+
+### Auto-Paste Not Working
+
+- Make sure you launched with `./whisper run`
+- Check that "WhisperRecorder" appears in System Preferences → Privacy & Security → Accessibility
+
+### Build Issues
+
+```bash
+# Clean build
+./whisper clean
+./whisper build
+
+# If problems persist
+./whisper cleanup
+./whisper build
+```
+
+## Configuration
+
+- **Model Selection**: Download and switch between different Whisper models
+- **Writing Styles**: AI-powered text enhancement (requires Gemini API key)
+- **Target Language**: Automatic translation support
+- **Hotkeys**: Customizable keyboard shortcuts for recording
+
+## Development
+
+Built with:
+
+- Swift 5.9+
+- SwiftUI
+- AVFoundation
+- whisper.cpp integration
+- Gemini AI API
+
+### New Safety Features (v1.3.1+)
+
+- ✅ Automatic process cleanup before operations
+- ✅ Lockfiles prevent multiple instances
+- ✅ No parallel jobs to avoid lipo conflicts
+- ✅ Timeout protection for audio operations
+- ✅ Emergency cleanup functionality
+
+See documentation in `../docs/` for detailed development information.
 
 ## Whisper Models
 
@@ -94,18 +202,6 @@ This will create a zip file that includes:
 3. Right-click on the app and select "Open" to bypass macOS security (first run only)
 4. Grant microphone permissions when prompted
 5. Select and download your preferred Whisper model when prompted
-
-## Troubleshooting
-
-If the app doesn't start, check the logs:
-
-- `~/Library/Logs/WhisperRecorder.log` - Contains launcher and environment information
-- `~/Library/Application Support/WhisperRecorder/whisperrecorder_debug.log` - Contains detailed application logs
-
-Common issues:
-
-- Missing microphone permissions: Go to System Preferences > Security & Privacy > Microphone
-- Missing notification permissions: Go to System Preferences > Notifications
 
 ## Credits
 

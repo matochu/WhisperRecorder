@@ -32,6 +32,7 @@ enum LogLevel: String, CaseIterable {
 }
 
 enum LogCategory: String, CaseIterable {
+    case app = "APP"
     case audio = "AUDIO"
     case whisper = "WHISPER"
     case llm = "LLM"
@@ -508,6 +509,7 @@ class DebugManager {
         case .performance: return "\u{001B}[91m" // Bright Red
         case .system: return "\u{001B}[97m"     // Bright White
         case .general: return "\u{001B}[90m"    // Dark Gray
+        case .app: return "\u{001B}[95m"         // Bright Magenta
         }
     }
     

@@ -164,13 +164,13 @@ class WritingStyleManager {
         
         // Create detailed, context-aware translation prompt
         let prompt = createTranslationPrompt(for: text, from: sourceLanguage, to: targetLanguageName)
-        
+
         callGeminiAPI(prompt: prompt, apiKey: apiKey) { result in
             if let translatedText = result {
                 logInfo(.llm, "✅ Successfully translated text")
                 logDebug(.llm, "Translated from: \"\(text)\"")
                 logDebug(.llm, "Translated to: \"\(translatedText)\"")
-                completion(translatedText)
+                    completion(translatedText)
             } else {
                 logWarning(.llm, "❌ Translation failed - returning original text")
                 completion(text)
@@ -372,10 +372,10 @@ class WritingStyleManager {
         }
 
         startTiming("api_request")
-        
+
         let task = URLSession.shared.dataTask(with: request) { data, response, error in
             let requestTime = endTiming("api_request")
-            
+
             if let error = error {
                 logError(.network, "❌ Network error: \(error.localizedDescription)")
                 logInfo(.performance, "Failed API request took \(String(format: "%.3f", requestTime ?? 0))s")
@@ -406,8 +406,8 @@ class WritingStyleManager {
                     logError(.network, "Error response: \(errorString)")
                 }
                 completion(nil)
-                return
-            }
+                            return
+                        }
 
             // Parse the response
             do {
@@ -418,7 +418,7 @@ class WritingStyleManager {
                        let firstCandidate = candidates.first,
                        let content = firstCandidate["content"] as? [String: Any],
                        let parts = content["parts"] as? [[String: Any]],
-                       let firstPart = parts.first,
+                        let firstPart = parts.first,
                        let text = firstPart["text"] as? String {
                         
                         logInfo(.network, "✅ Successfully parsed API response")
