@@ -109,6 +109,27 @@ struct ConfigurationCard: View {
                         .buttonStyle(PlainButtonStyle())
                         .help(llmManager.hasError ? llmManager.getLastErrorSummary() : "")
                         
+                        // Fixed space for retry button to prevent layout shift
+                        HStack(spacing: 0) {
+                            if llmManager.hasError {
+                                Button(action: {
+                                    llmManager.retryLastRequest()
+                                }) {
+                                    Image(systemName: "arrow.clockwise")
+                                        .font(.system(size: 10))
+                                        .foregroundColor(.orange)
+                                }
+                                .buttonStyle(PlainButtonStyle())
+                                .help("Retry last LLM request")
+                            } else {
+                                // Invisible placeholder to maintain consistent spacing
+                                Image(systemName: "arrow.clockwise")
+                                    .font(.system(size: 10))
+                                    .opacity(0)
+                            }
+                        }
+                        .frame(width: 16, alignment: .center)
+                        
                         Button(action: {
                             settingsType = settingsType == .api ? nil : .api
                         }) {

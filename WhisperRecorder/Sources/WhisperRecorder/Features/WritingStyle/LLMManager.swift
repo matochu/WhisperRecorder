@@ -107,6 +107,9 @@ class LLMManager: ObservableObject {
     @Published var lastErrorTime: Date = Date()
     @Published var hasError: Bool = false
     
+    // Last request for retry functionality
+    private var lastRequest: (() -> Void)?
+    
     private init() {
         logInfo(.llm, "LLMManager initializing...")
         loadAllApiKeys()
@@ -233,6 +236,14 @@ class LLMManager: ObservableObject {
     ) {
         let targetProvider = provider ?? currentProvider
         
+        logDebug(.llm, "🚀 Starting API call to \(targetProvider.displayName)")
+        logDebug(.llm, "📤 Request prompt (\(prompt.count) chars): \(prompt)")
+        
+        // Store this request for potential retry
+        lastRequest = { [weak self] in
+            self?.callAPI(prompt: prompt, provider: provider, completion: completion)
+        }
+        
         // Check API key requirement
         if targetProvider.requiresApiKey && !hasApiKey(for: targetProvider) {
             let errorMsg = "No API key available for \(targetProvider.displayName)"
@@ -302,16 +313,20 @@ class LLMManager: ObservableObject {
                    let firstPart = parts.first,
                    let text = firstPart["text"] as? String {
                     
-                    completion(text.trimmingCharacters(in: .whitespacesAndNewlines))
+                    let cleanedText = text.trimmingCharacters(in: .whitespacesAndNewlines)
+                    logDebug(.llm, "📥 Gemini API response (\(cleanedText.count) chars): \(cleanedText)")
+                    completion(cleanedText)
                 } else {
                     let errorMsg = "Failed to parse Gemini response structure"
                     logError(.network, "❌ \(errorMsg)")
+                    logDebug(.llm, "📥 Raw Gemini response: \(String(data: data, encoding: .utf8) ?? "nil")")
                     self.setError(errorMsg)
                     completion(nil)
                 }
             } catch {
                 let errorMsg = "Gemini JSON parsing error: \(error.localizedDescription)"
                 logError(.network, "❌ \(errorMsg)")
+                logDebug(.llm, "📥 Raw Gemini response: \(String(data: data, encoding: .utf8) ?? "nil")")
                 self.setError(errorMsg)
                 completion(nil)
             }
@@ -782,6 +797,17 @@ class LLMManager: ObservableObject {
         }
     }
     
+    func retryLastRequest() {
+        guard let lastRequest = lastRequest else {
+            logWarning(.llm, "No last request to retry")
+            return
+        }
+        
+        logInfo(.llm, "🔄 Retrying last LLM request")
+        clearError() // Clear previous error
+        lastRequest() // Execute the stored request
+    }
+    
     func getLastErrorSummary() -> String {
         if !hasError || lastError.isEmpty {
             return ""
@@ -804,5 +830,28 @@ class LLMManager: ObservableObject {
         }
     }
     
-    // MARK: - Text Processing via LLM
+    // MARK: - Custom Prompt Processing
+    
+    func processWithCustomPrompt(_ prompt: String, completion: @escaping (String?) -> Void) {
+        logInfo(.llm, "🤖 Processing custom prompt")
+        logDebug(.llm, "Custom prompt: \\(prompt.count) characters")
+        
+        guard hasApiKey() else {
+            logWarning(.llm, "❌ No API key available for custom prompt processing")
+            completion(nil)
+            return
+        }
+        
+        // Direct API call without style or translation processing
+        callAPI(prompt: prompt) { result in
+            if let processedText = result {
+                logInfo(.llm, "✅ Custom prompt processed successfully")
+                logDebug(.llm, "Result: \\(processedText.count) characters")
+                completion(processedText)
+            } else {
+                logError(.llm, "❌ Custom prompt processing failed")
+                completion(nil)
+            }
+        }
+    }
 } 

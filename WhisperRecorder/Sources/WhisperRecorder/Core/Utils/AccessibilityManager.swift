@@ -113,6 +113,201 @@ class AccessibilityManager: ObservableObject {
         }
     }
     
+    // MARK: - Selected Text Capture
+    
+    func getSelectedText() -> String? {
+        // Check if we have accessibility permissions first
+        guard checkAccessibilityPermissions() else {
+            logWarning(.system, "❌ Cannot read selected text - no accessibility permissions")
+            return nil
+        }
+        
+        logDebug(.system, "🔍 Attempting to read selected text from active application")
+        
+        // Get the frontmost application
+        guard let frontmostApp = NSWorkspace.shared.frontmostApplication else {
+            logWarning(.system, "❌ No frontmost application found")
+            return nil
+        }
+        
+        logDebug(.system, "🎯 Frontmost app: \(frontmostApp.localizedName ?? "Unknown")")
+        
+        // Create AXUIElement for the application
+        let appElement = AXUIElementCreateApplication(frontmostApp.processIdentifier)
+        
+        // Try to get the focused element
+        var focusedElement: CFTypeRef?
+        let focusedResult = AXUIElementCopyAttributeValue(appElement, kAXFocusedUIElementAttribute as CFString, &focusedElement)
+        
+        if focusedResult != .success {
+            logDebug(.system, "📝 No focused element found, trying alternative methods")
+            return tryAlternativeTextCapture(appElement: appElement)
+        }
+        
+        guard let focused = focusedElement else {
+            logDebug(.system, "📝 Focused element is nil")
+            return tryAlternativeTextCapture(appElement: appElement)
+        }
+        
+        // Try to get selected text from focused element
+        if let selectedText = getSelectedTextFromElement(focused as! AXUIElement) {
+            logInfo(.system, "✅ Successfully read selected text: \(selectedText.count) characters")
+            return selectedText
+        }
+        
+        // Fallback: try alternative methods
+        return tryAlternativeTextCapture(appElement: appElement)
+    }
+    
+    private func getSelectedTextFromElement(_ element: AXUIElement) -> String? {
+        // Try to get selected text attribute
+        var selectedTextValue: CFTypeRef?
+        let selectedTextResult = AXUIElementCopyAttributeValue(element, kAXSelectedTextAttribute as CFString, &selectedTextValue)
+        
+        if selectedTextResult == .success, let selectedText = selectedTextValue as? String, !selectedText.isEmpty {
+            logDebug(.system, "✅ Found selected text via kAXSelectedTextAttribute: \(selectedText.count) chars")
+            return selectedText
+        }
+        
+        // Try to get selected text range and extract text
+        if let textFromRange = getTextFromSelectedRange(element) {
+            return textFromRange
+        }
+        
+        logDebug(.system, "📝 No selected text found in element")
+        return nil
+    }
+    
+    private func getTextFromSelectedRange(_ element: AXUIElement) -> String? {
+        // Get selected text range
+        var selectedRangeValue: CFTypeRef?
+        let rangeResult = AXUIElementCopyAttributeValue(element, kAXSelectedTextRangeAttribute as CFString, &selectedRangeValue)
+        
+        guard rangeResult == .success, let rangeValue = selectedRangeValue else {
+            return nil
+        }
+        
+        // Get the entire text value
+        var textValue: CFTypeRef?
+        let textResult = AXUIElementCopyAttributeValue(element, kAXValueAttribute as CFString, &textValue)
+        
+        guard textResult == .success, let fullText = textValue as? String else {
+            return nil
+        }
+        
+        // Try to extract range information
+        if CFGetTypeID(rangeValue) == AXValueGetTypeID() {
+            var range = CFRange()
+            if AXValueGetValue(rangeValue as! AXValue, .cfRange, &range) {
+                let location = range.location
+                let length = range.length
+                
+                // Validate range
+                guard location >= 0, length > 0, location + length <= fullText.count else {
+                    return nil
+                }
+                
+                // Extract selected text using range
+                let startIndex = fullText.index(fullText.startIndex, offsetBy: location)
+                let endIndex = fullText.index(startIndex, offsetBy: length)
+                let selectedText = String(fullText[startIndex..<endIndex])
+                
+                logDebug(.system, "✅ Extracted text from range (\(location), \(length)): \(selectedText.count) chars")
+                return selectedText
+            }
+        }
+        
+        return nil
+    }
+    
+    private func tryAlternativeTextCapture(appElement: AXUIElement) -> String? {
+        logDebug(.system, "🔄 Trying alternative text capture methods")
+        
+        // Method 1: Try to find text fields with selections
+        if let textFromFields = findSelectedTextInTextFields(appElement) {
+            return textFromFields
+        }
+        
+        // Method 2: Try web content (for browsers)
+        if let textFromWeb = findSelectedTextInWebContent(appElement) {
+            return textFromWeb
+        }
+        
+        logDebug(.system, "📝 No selected text found via alternative methods")
+        return nil
+    }
+    
+    private func findSelectedTextInTextFields(_ appElement: AXUIElement) -> String? {
+        // Get all text fields in the application
+        var children: CFTypeRef?
+        let childrenResult = AXUIElementCopyAttributeValue(appElement, kAXChildrenAttribute as CFString, &children)
+        
+        guard childrenResult == .success, let childrenArray = children as? [AXUIElement] else {
+            return nil
+        }
+        
+        // Recursively search for text fields with selections
+        return searchElementsForSelectedText(childrenArray)
+    }
+    
+    private func searchElementsForSelectedText(_ elements: [AXUIElement]) -> String? {
+        for element in elements {
+            // Check if this element has selected text
+            if let selectedText = getSelectedTextFromElement(element), !selectedText.isEmpty {
+                return selectedText
+            }
+            
+            // Recursively check children
+            var children: CFTypeRef?
+            let childrenResult = AXUIElementCopyAttributeValue(element, kAXChildrenAttribute as CFString, &children)
+            
+            if childrenResult == .success, let childrenArray = children as? [AXUIElement] {
+                if let foundText = searchElementsForSelectedText(childrenArray) {
+                    return foundText
+                }
+            }
+        }
+        
+        return nil
+    }
+    
+    private func findSelectedTextInWebContent(_ appElement: AXUIElement) -> String? {
+        // For web browsers, try to find web areas with selections
+        var role: CFTypeRef?
+        let roleResult = AXUIElementCopyAttributeValue(appElement, kAXRoleAttribute as CFString, &role)
+        
+        if roleResult == .success, let roleString = role as? String, roleString.contains("Web") {
+            logDebug(.system, "🌐 Detected web content, trying web-specific extraction")
+            
+            // Try to get selected text from web areas
+            return getSelectedTextFromWebArea(appElement)
+        }
+        
+        return nil
+    }
+    
+    private func getSelectedTextFromWebArea(_ element: AXUIElement) -> String? {
+        // Web content often uses different attributes for selected text
+        // Try common web accessibility attributes
+        let webTextAttributes = [
+            kAXSelectedTextAttribute,
+            kAXValueAttribute,
+            "AXSelectedTextMarkerRange" // Safari-specific
+        ]
+        
+        for attribute in webTextAttributes {
+            var value: CFTypeRef?
+            let result = AXUIElementCopyAttributeValue(element, attribute as CFString, &value)
+            
+            if result == .success, let textValue = value as? String, !textValue.isEmpty {
+                logDebug(.system, "✅ Found web selected text via \(attribute): \(textValue.count) chars")
+                return textValue
+            }
+        }
+        
+        return nil
+    }
+    
     // MARK: - Private Methods
     
     private func setupPermissionMonitoring() {

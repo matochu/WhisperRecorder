@@ -10,6 +10,9 @@ struct WritingStyle {
             id: "default", name: "Default",
             description: "Original transcription without modification"),
         WritingStyle(
+            id: "free", name: "Free Flow",
+            description: "Process voice commands with context awareness"),
+        WritingStyle(
             id: "vibe-coding", name: "Vibe Coding",
             description: "For instructing AI on coding tasks"),
         WritingStyle(
@@ -107,154 +110,51 @@ class WritingStyleManager: ObservableObject {
     // MARK: - Legacy Method Compatibility - RESTORED WORKING VERSION
     
     func reformatText(_ text: String, withStyle style: WritingStyle, completion: @escaping (String?) -> Void) {
-        logInfo(.llm, "🔄 Starting reformatText pipeline")
-        logDebug(.llm, "Input text: \"\(text)\"")
-        logDebug(.llm, "Selected style: \(style.name) (\(style.id))")
-        logDebug(.llm, "Target language: \(WritingStyleManager.supportedLanguages[currentTargetLanguage] ?? currentTargetLanguage)")
+        logDebug(.llm, "🔄 reformatText called with style: \(style.id), target language: \(currentTargetLanguage)")
         
-        // Always start with applying the writing style if it's not default
-        let applyStyle = { (inputText: String, next: @escaping (String?) -> Void) in
-            if style.id == "default" {
-                logDebug(.llm, "Default style selected - skipping style formatting")
-                next(inputText)
-            } else {
-                logInfo(.llm, "🎨 Applying writing style: \(style.name)")
-                self.reformatWithGeminiAPI(inputText, style: style) { formattedText in
-                    if let formatted = formattedText {
-                        logInfo(.llm, "✅ Style formatting completed")
-                        logDebug(.llm, "Style-formatted text: \"\(formatted)\"")
-                    } else {
-                        logWarning(.llm, "⚠️ Style formatting failed, using original text")
-                    }
-                    next(formattedText ?? inputText)
-                }
-            }
-        }
-
-        // Then handle translation if needed
-        applyStyle(text) { styledText in
-            // Ensure we have valid text to translate, use original if style formatting failed
-            logDebug(.llm, "Proceeding to translation phase with text: \"\(styledText ?? text)\"")
-            self.translateIfNeeded(styledText ?? text) { finalResult in
-                logInfo(.llm, "🏁 ReformatText pipeline complete")
-                if let final = finalResult {
-                    logDebug(.llm, "Final result: \"\(final)\"")
-                } else {
-                    logWarning(.llm, "Pipeline returned nil result")
-                }
-                completion(finalResult)
-            }
-        }
-    }
-    
-    // Method to reformat text using Gemini API
-    private func reformatWithGeminiAPI(_ text: String, style: WritingStyle, completion: @escaping (String?) -> Void) {
-        guard llmManager.hasApiKey() else {
-            logWarning(.llm, "❌ No Gemini API key available - returning original text")
-            completion(text)  // Return original text instead of nil
+        // Check if any processing is actually needed
+        let needsStyleChange = style.id != "default"
+        let needsTranslation = currentTargetLanguage != noTranslate
+        
+        if !needsStyleChange && !needsTranslation {
+            logDebug(.llm, "📝 No processing needed - returning original text")
+            completion(text)
             return
         }
-
-        // Create prompt for the selected style
+        
+        // Create prompt that includes both style and translation requirements
         let prompt = createPrompt(for: text, style: style)
-
-        // Make API call to Gemini via LLMManager
+        
+        logDebug(.llm, "📤 Sending to LLM API:")
+        logDebug(.llm, "   Style: \(style.name) (\(style.id))")
+        logDebug(.llm, "   Target language: \(WritingStyleManager.supportedLanguages[currentTargetLanguage] ?? currentTargetLanguage)")
+        logDebug(.llm, "   Prompt: \(prompt)")
+        
+        // Call LLM API with the prepared prompt
         llmManager.callAPI(prompt: prompt) { result in
             if let formattedText = result {
-                logInfo(.llm, "✅ Successfully reformatted text with style: \(style.id)")
+                logInfo(.llm, "✅ Successfully processed text with style: \(style.id)")
+                logDebug(.llm, "📥 LLM Response: \(formattedText)")
                 completion(formattedText)
             } else {
-                logWarning(.llm, "❌ Failed to reformat text - returning original")
+                logWarning(.llm, "❌ Failed to process text - returning original")
                 completion(text)  // Return original text on failure
             }
         }
     }
     
-    private func translateIfNeeded(_ text: String, completion: @escaping (String?) -> Void) {
-        guard llmManager.hasApiKey() else {
-            logWarning(.llm, "❌ No Gemini API key available - returning original text")
-            completion(text)
-            return
-        }
-
-        if currentTargetLanguage == noTranslate {
-            logDebug(.llm, "No translation requested - using original text")
-            completion(text)
-            return
-        }
-
-        let sourceLanguage = "detected language" // Let Gemini auto-detect
-        let targetLanguageName = WritingStyleManager.supportedLanguages[currentTargetLanguage] ?? currentTargetLanguage
-        
-        logInfo(.llm, "🌍 Starting translation from \(sourceLanguage) to \(targetLanguageName)")
-        
-        // Create detailed, context-aware translation prompt
-        let prompt = createTranslationPrompt(for: text, from: sourceLanguage, to: targetLanguageName)
-
-        llmManager.callAPI(prompt: prompt) { result in
-            if let translatedText = result {
-                logInfo(.llm, "✅ Successfully translated text")
-                logDebug(.llm, "Translated from: \"\(text)\"")
-                logDebug(.llm, "Translated to: \"\(translatedText)\"")
-                completion(translatedText)
-            } else {
-                logWarning(.llm, "❌ Translation failed - returning original text")
-                completion(text)
-            }
-        }
+    // MARK: - Context-Enhanced Text Processing
+    
+    func reformatTextWithContext(_ text: String, withStyle style: WritingStyle, context: String, completion: @escaping (String?) -> Void) {
+        // Create enhanced prompt that includes context + existing style/translation logic
+        let contextualPrompt = createContextualPrompt(text: text, style: style, context: context)
+        llmManager.processWithCustomPrompt(contextualPrompt, completion: completion)
     }
     
-    private func createTranslationPrompt(for text: String, from sourceLanguage: String, to targetLanguage: String) -> String {
-        // Enhanced translation prompt following Gemini best practices
-        let prompt = """
-        You are a professional translator with expertise in natural, contextually accurate translations.
-        
-        TASK: Translate the provided text from \(sourceLanguage) to \(targetLanguage).
-        
-        CONTEXT: This text is from a voice recording that has been transcribed and may contain:
-        - Informal spoken language
-        - Technical terminology
-        - Proper nouns (names, places, brands)
-        - Colloquial expressions
-        
-        REQUIREMENTS:
-        1. Translate naturally - preserve the meaning and tone, not word-for-word
-        2. Keep proper nouns in their original form unless they have established translations
-        3. Maintain the original formatting and structure
-        4. Preserve any technical terms that are commonly used in the target language
-        5. If the text contains multiple sentences, ensure natural flow between them
-        6. Use contemporary, natural language that a native speaker would use
-        
-        FORMAT: Return only the translated text without any explanations, prefixes, or additional commentary.
-        
-        TEXT TO TRANSLATE:
-        \(text)
-        
-        TRANSLATION:
-        """
-        
-        logTrace(.llm, "Created enhanced translation prompt (\(prompt.count) characters)")
-        return prompt
-    }
+    // MARK: - Custom Prompt Processing
     
-    private func createPrompt(for text: String, style: WritingStyle) -> String {
-        var prompt = ""
-        
-        // Add style-specific instructions
-        switch style.id {
-        case "vibe-coding":
-            prompt = "Transform this transcribed voice note into clear, actionable instructions for coding tasks. Make it concise and technical:"
-        case "coworker-chat":
-            prompt = "Rewrite this voice note as a casual, friendly message for a coworker in Slack or Teams:"
-        case "email":
-            prompt = "Transform this voice note into a professional but friendly email format:"
-        default:
-            prompt = "Improve the clarity and readability of this text while maintaining its original meaning:"
-        }
-        
-        prompt += "\n\n\(text)"
-        
-        return prompt
+    func processWithCustomPrompt(_ prompt: String, completion: @escaping (String?) -> Void) {
+        llmManager.processWithCustomPrompt(prompt, completion: completion)
     }
     
     // MARK: - Language Settings
@@ -270,5 +170,94 @@ class WritingStyleManager: ObservableObject {
     
     func getTargetLanguage() -> String? {
         return targetLanguage
+    }
+    
+    // MARK: - Legacy Methods for Backward Compatibility
+    
+    private func createPrompt(for text: String, style: WritingStyle) -> String {
+        var prompt = ""
+        
+        // Add style-specific instructions
+        switch style.id {
+        case "free":
+            prompt = "You are a smart assistant that processes voice commands and responds. Analyze the voice input and provide a relevant response (no pleasantries):"
+        case "vibe-coding":
+            prompt = "Transform this transcribed voice note into clear, actionable instructions for coding tasks. Make it concise and technical:"
+        case "coworker-chat":
+            prompt = "Rewrite this voice note as a casual, friendly message for a coworker in Slack or Teams:"
+        case "email":
+            prompt = "Transform this voice note into a professional but friendly email format:"
+        case "default":
+            prompt = "Improve the clarity and readability of this text while maintaining its original meaning:"
+        default:
+            prompt = "Improve the clarity and readability of this text while maintaining its original meaning:"
+        }
+        
+        // ALWAYS add language instruction (for all styles)
+        if currentTargetLanguage != noTranslate {
+            let langName = WritingStyleManager.supportedLanguages[currentTargetLanguage] ?? currentTargetLanguage
+            prompt += " Respond in \(langName)."
+        } else {
+            prompt += " Respond in the same language as the user input."
+        }
+        
+        prompt += "\n\n\(text)"
+        
+        return prompt
+    }
+    
+    private func createContextualPrompt(text: String, style: WritingStyle, context: String) -> String {
+        var prompt = "You are helping to create a response based on context and user input.\n\n"
+        
+        // Add context with markdown boundaries for clear separation
+        prompt += """
+---
+## CONTEXT (from clipboard):
+```
+\(context)
+```
+---
+
+"""
+        
+        // Add style-specific instructions that incorporate context
+        switch style.id {
+        case "free":
+            prompt += """
+Based on the context above, answer the user's question or request directly and concisely.
+
+INSTRUCTIONS:
+- Give direct, specific answers
+- Use the context to provide accurate information
+- No explanations unless asked
+- No extra text or pleasantries
+- Just the answer or response to what was asked
+
+Answer directly:
+"""
+        case "vibe-coding":
+            prompt += "Based on the context above, transform this voice note into clear, actionable coding instructions that address the context:"
+        case "coworker-chat":
+            prompt += "Based on the context above, create a casual, friendly response for a coworker in Slack or Teams:"
+        case "email":
+            prompt += "Based on the context above, create a professional but friendly email response:"
+        default:
+            prompt += "Based on the context above, create an appropriate response. Consider the context and provide a relevant, well-formatted reply:"
+        }
+        
+        prompt += "\n\n**USER INPUT (from voice transcription):**\n\(text)\n\n"
+        
+        // ALWAYS add language instruction (consistent with createPrompt)
+        let currentTargetLang = currentTargetLanguage
+        if currentTargetLang != noTranslate {
+            let langName = WritingStyleManager.supportedLanguages[currentTargetLang] ?? currentTargetLang
+            prompt += "Respond in \(langName).\n\n"
+        } else {
+            prompt += "Respond in the same language as the user input.\n\n"
+        }
+        
+        prompt += "Response:"
+        
+        return prompt
     }
 }

@@ -8,6 +8,7 @@ import SwiftUI
 
 extension KeyboardShortcuts.Name {
     static let toggleRecording = Self("toggleRecording")
+    static let contextualProcessing = Self("contextualProcessing")
 }
 
 class AppDelegate: NSObject, NSApplicationDelegate {
@@ -92,11 +93,23 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             logDebug(.ui, "Keyboard shortcut triggered")
             audioRecorder.toggleRecording()
         }
+        
+        // Set up contextual processing shortcut
+        KeyboardShortcuts.onKeyDown(for: .contextualProcessing) { [self] in
+            logDebug(.ui, "Contextual processing shortcut triggered")
+            audioRecorder.processWithClipboardContext()
+        }
 
         if KeyboardShortcuts.getShortcut(for: .toggleRecording) == nil {
             logInfo(.system, "Setting default keyboard shortcut")
             KeyboardShortcuts.setShortcut(
-                .init(.r, modifiers: [.command, .shift]), for: .toggleRecording)
+                .init(.e, modifiers: [.command, .shift]), for: .toggleRecording)
+        }
+        
+        if KeyboardShortcuts.getShortcut(for: .contextualProcessing) == nil {
+            logInfo(.system, "Setting default contextual processing shortcut")
+            KeyboardShortcuts.setShortcut(
+                .init(.w, modifiers: [.command, .shift]), for: .contextualProcessing)
         }
 
         // Handle status updates

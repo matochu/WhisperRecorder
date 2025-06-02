@@ -96,6 +96,10 @@ struct NewPopoverView: View {
         .onChange(of: selectedWritingStyleIndex) { newValue in
             audioRecorder.selectedWritingStyle = WritingStyle.styles[newValue]
             logDebug(.ui, "Selected writing style: \(audioRecorder.selectedWritingStyle.name)")
+            
+            // Save to UserDefaults to persist selection
+            UserDefaults.standard.set(newValue, forKey: "selectedWritingStyleIndex")
+            logDebug(.ui, "💾 Saved writing style index: \(newValue)")
         }
         .onChange(of: selectedLanguageCode) { newValue in
             WritingStyleManager.shared.setTargetLanguage(newValue)
@@ -204,11 +208,20 @@ struct NewPopoverView: View {
             selectedModelIndex = index
         }
 
-        // Get current writing style index
-        if let index = WritingStyle.styles.firstIndex(where: {
-            $0.id == audioRecorder.selectedWritingStyle.id
-        }) {
-            selectedWritingStyleIndex = index
+        // Load writing style index from UserDefaults (instead of audioRecorder to avoid conflicts)
+        let savedStyleIndex = UserDefaults.standard.integer(forKey: "selectedWritingStyleIndex")
+        if savedStyleIndex < WritingStyle.styles.count {
+            selectedWritingStyleIndex = savedStyleIndex
+            audioRecorder.selectedWritingStyle = WritingStyle.styles[savedStyleIndex]
+            logDebug(.ui, "📱 Loaded saved writing style: \(audioRecorder.selectedWritingStyle.name) (index: \(savedStyleIndex))")
+        } else {
+            // Fallback to current audioRecorder value if no saved preference
+            if let index = WritingStyle.styles.firstIndex(where: {
+                $0.id == audioRecorder.selectedWritingStyle.id
+            }) {
+                selectedWritingStyleIndex = index
+                logDebug(.ui, "📱 Using current writing style: \(audioRecorder.selectedWritingStyle.name) (index: \(index))")
+            }
         }
 
         // Set up API token field

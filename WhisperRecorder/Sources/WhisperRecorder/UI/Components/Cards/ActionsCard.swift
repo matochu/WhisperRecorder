@@ -28,7 +28,7 @@ struct ActionsCard: View {
             }
             
             // Shortcut display
-            HStack {
+            HStack(spacing: 16) {
                 Button(action: {
                     // Open keyboard shortcuts preferences
                     if let url = URL(string: "x-apple.systempreferences:com.apple.preference.keyboard?Shortcuts") {
@@ -37,44 +37,44 @@ struct ActionsCard: View {
                 }) {
                     HStack(spacing: 4) {
                         Image(systemName: "gear")
-                            .foregroundColor(.secondary)
                             .font(.system(size: 10))
-                        Text("Shortcut:")
-                            .font(.system(size: 11))
-                            .foregroundColor(.secondary)
+
                         KeyboardShortcuts.Recorder(for: .toggleRecording)
                             .font(.system(size: 11))
                     }
-                    .padding(.horizontal, 8)
+                    .padding(.horizontal, 4)
                     .padding(.vertical, 4)
                     .background(Color.clear)
                     .cornerRadius(4)
                 }
                 .buttonStyle(PlainButtonStyle())
                 .frame(height: 24) // Fixed height to prevent stretching
+                .frame(maxWidth: 140) // Limit entire button width
                 
-                Spacer()
-                
-                // Process again button (smaller)
-                Button(action: processAgain) {
+                // Contextual processing shortcut
+                Button(action: {
+                    // Open keyboard shortcuts preferences
+                    if let url = URL(string: "x-apple.systempreferences:com.apple.preference.keyboard?Shortcuts") {
+                        NSWorkspace.shared.open(url)
+                    }
+                }) {
                     HStack(spacing: 4) {
-                        Image(systemName: "arrow.clockwise")
+                        Image(systemName: "doc.text.below.ecg")
                             .font(.system(size: 10))
-                        Text("Process Again")
+                        KeyboardShortcuts.Recorder(for: .contextualProcessing)
                             .font(.system(size: 11))
                     }
-                    .padding(.horizontal, 8)
+                    .padding(.horizontal, 4)
                     .padding(.vertical, 4)
-                    .background(canProcessAgain ? Color(.controlColor) : Color(.controlColor).opacity(0.5))
-                    .foregroundColor(canProcessAgain ? .primary : .secondary)
+                    .background(Color.clear)
                     .cornerRadius(4)
                 }
                 .buttonStyle(PlainButtonStyle())
                 .frame(height: 24) // Fixed height to prevent stretching
-                .disabled(!canProcessAgain)
-                .help(processAgainTooltip)
+                .frame(maxWidth: 140) // Limit entire button width
             }
             .frame(height: 32) // Fixed height for the entire row
+            .frame(maxWidth: .infinity) // Center the HStack content
         }
         .cardStyle()
         .onChange(of: audioRecorder.statusDescription) { newStatus in
@@ -198,48 +198,5 @@ struct ActionsCard: View {
         // Show toast with full text (no truncation)
         logInfo(.ui, "🎯 [TOAST] Showing toast: '\(toastMessage)' with full text: \(text.count) chars")
         ToastManager.shared.showToast(message: toastMessage, preview: text)
-    }
-    
-    private func processAgain() {
-        guard AppDelegate.hasOriginalText else {
-            logWarning(.ui, "❌ No original text available to process again")
-            return
-        }
-        
-        logInfo(.ui, "🔄 Processing original text again")
-        // Use the currently selected writing style or default
-        let currentStyle = WritingStyle.styles.first { $0.id == "default" } ?? WritingStyle.styles[0]
-        
-        // Reprocess the original Whisper text through WritingStyleManager
-        WritingStyleManager.shared.reformatText(AppDelegate.lastOriginalWhisperText, withStyle: currentStyle) { processedText in
-            if let processed = processedText {
-                AppDelegate.lastProcessedText = processed
-                logInfo(.ui, "✅ Reprocessed text successfully")
-                
-                // Copy the new processed text to clipboard
-                DispatchQueue.main.async {
-                    let pasteboard = NSPasteboard.general
-                    pasteboard.clearContents()
-                    pasteboard.setString(processed, forType: .string)
-                    logInfo(.ui, "📋 Copied reprocessed text to clipboard")
-                }
-            } else {
-                logError(.ui, "❌ Failed to reprocess text")
-            }
-        }
-    }
-    
-    private var canProcessAgain: Bool {
-        return AppDelegate.hasOriginalText && WritingStyleManager.shared.hasApiKey()
-    }
-    
-    private var processAgainTooltip: String {
-        if !WritingStyleManager.shared.hasApiKey() {
-            return "Process Again requires API token to be set"
-        } else if !AppDelegate.hasOriginalText {
-            return "No original text available to process"
-        } else {
-            return "Process the original transcription again with current settings"
-        }
     }
 } 

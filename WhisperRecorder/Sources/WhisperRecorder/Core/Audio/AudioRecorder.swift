@@ -41,6 +41,10 @@ class AudioRecorder: ObservableObject {
     // Writing style selection
     @Published var selectedWritingStyle: WritingStyle = WritingStyle.styles[0]  // Default style
     @Published private(set) var isReformattingWithGemini = false
+    
+    // Storage for contextual workflow
+    private var contextualClipboardContent: String = ""
+    private var isContextualWorkflow: Bool = false
 
     // Status update callback
     var onStatusUpdate: (() -> Void)?
@@ -296,6 +300,21 @@ class AudioRecorder: ObservableObject {
             
             return
         }
+        
+        // SMART SHORTCUT HANDLING: If we're in contextual workflow mode and recording,
+        // the toggle shortcut should stop the contextual recording properly
+        if isContextualWorkflow && isRecording {
+            logInfo(.audio, "🎯 Contextual workflow active - stopping contextual recording via toggle shortcut")
+            stopRecording()
+            return
+        }
+        
+        // SMART SHORTCUT HANDLING: If we're in contextual workflow but not recording yet,
+        // ignore the toggle shortcut to avoid conflicts
+        if isContextualWorkflow {
+            logInfo(.audio, "🎯 Contextual workflow active - ignoring toggle shortcut (not recording)")
+            return
+        }
 
         if isRecording {
             stopRecording()
@@ -487,6 +506,29 @@ class AudioRecorder: ObservableObject {
                 }
                 return
             }
+            
+            // Add buffer validation to prevent GGML crashes
+            let bufferSize = self.audioBuffer.count
+            let maxSafeSize = 16000 * 300 // 5 minutes at 16kHz
+            let minSafeSize = 8000 // 0.5 seconds at 16kHz
+            
+            guard bufferSize >= minSafeSize else {
+                logError(.audio, "❌ Audio buffer too small: \(bufferSize) samples (min: \(minSafeSize))")
+                DispatchQueue.main.async {
+                    self.isTranscribing = false
+                    self.statusDescription = "Ready"
+                    self.lastTranscription = "Error: Recording too short"
+                    self.onStatusUpdate?()
+                }
+                return
+            }
+            
+            if bufferSize > maxSafeSize {
+                logWarning(.audio, "⚠️ Large audio buffer: \(bufferSize) samples, trimming to last \(maxSafeSize)")
+                self.audioBuffer = Array(self.audioBuffer.suffix(maxSafeSize))
+            }
+            
+            logDebug(.audio, "✅ Audio buffer validated: \(self.audioBuffer.count) samples")
 
             // Step 1: Whisper Transcription
             logInfo(.audio, "🎤 Starting Whisper transcription...")
@@ -504,7 +546,7 @@ class AudioRecorder: ObservableObject {
             AppDelegate.lastOriginalWhisperText = transcription
             logDebug(.storage, "Stored original Whisper text: \(transcription.count) characters")
 
-            // Step 2: Check if we need reformatting or translation
+            // Step 2: Check if we need reformatting or translation (normal workflow)
             let currentTargetLang = WritingStyleManager.shared.currentTargetLanguage
             let noTranslateValue = WritingStyleManager.shared.noTranslate
             
@@ -514,9 +556,11 @@ class AudioRecorder: ObservableObject {
             logDebug(.llm, "  - No-translate value: \(noTranslateValue)")
             logDebug(.llm, "  - Needs style formatting: \(self.selectedWritingStyle.id != "default")")
             logDebug(.llm, "  - Needs translation: \(currentTargetLang != noTranslateValue)")
+            logDebug(.llm, "  - Has contextual content: \(self.isContextualWorkflow)")
             
             let needsProcessing = self.selectedWritingStyle.id != "default" || 
-                                 currentTargetLang != noTranslateValue
+                                 currentTargetLang != noTranslateValue ||
+                                 self.isContextualWorkflow
             
             if !needsProcessing {
                 logInfo(.audio, "📋 Using default style and no translation - no reformatting needed")
@@ -538,73 +582,58 @@ class AudioRecorder: ObservableObject {
                     self.onStatusUpdate?()
                     logInfo(.audio, "✅ Transcription pipeline complete (no processing needed)")
                     
-                    // Play completion sound after entire transcription process is done
-                    NSSound(named: "Tink")?.play()
+                    // Play completion sound with logging
+                    logDebug(.audio, "🔊 Playing completion sound")
+                    
+                    if let sound = NSSound(named: "Tink") {
+                        sound.volume = 1.2
+                        sound.play()
+                        logDebug(.audio, "✅ Tink sound played")
+                    } else {
+                        NSSound.beep()
+                        logDebug(.audio, "🔔 System beep played")
+                    }
                 }
                 return
             }
 
-            // Step 3: Gemini Processing (reformatting and/or translation)
+            // Step 3: LLM Processing (reformatting, translation, and/or contextual processing)
             DispatchQueue.main.async {
-                self.statusDescription = "Processing..."
+                if self.isContextualWorkflow {
+                    self.statusDescription = "Processing with context..."
+                } else {
+                    self.statusDescription = "Processing..."
+                }
                 self.isReformattingWithGemini = true
                 self.onStatusUpdate?()
             }
 
-            logInfo(.audio, "🤖 Starting Gemini processing (style: \(self.selectedWritingStyle.name), translation: \(WritingStyleManager.shared.currentTargetLanguage))...")
+            let processingType = self.isContextualWorkflow ? "contextual" : "style/translation"
+            logInfo(.audio, "🤖 Starting \(processingType) processing...")
             logInfo(.llm, "Selected writing style: \(self.selectedWritingStyle.name) (\(self.selectedWritingStyle.id))")
             logInfo(.llm, "Target language: \(WritingStyleManager.supportedLanguages[WritingStyleManager.shared.currentTargetLanguage] ?? WritingStyleManager.shared.currentTargetLanguage)")
             logInfo(.llm, "Input text for processing: \"\(transcription)\"")
             
-            startTiming("gemini_processing")
+            if self.isContextualWorkflow {
+                logInfo(.llm, "Contextual content: \"\(self.contextualClipboardContent)\"")
+            }
+            
+            startTiming("llm_processing")
 
-            WritingStyleManager.shared.reformatText(
-                transcription, withStyle: self.selectedWritingStyle
-            ) { reformattedText in
-                let geminiTime = endTiming("gemini_processing")
-                let totalTime = endTiming("transcription_pipeline")
-                
-                DispatchQueue.main.async {
-                    // Always reset status to Ready regardless of result
-                    defer {
-                        self.isTranscribing = false
-                        self.isReformattingWithGemini = false
-                        self.statusDescription = "Ready"
-                        self.onStatusUpdate?()
-                        
-                        // Play completion sound after entire transcription process is done
-                        NSSound(named: "Tink")?.play()
-                    }
-                    
-                    if let reformattedText = reformattedText {
-                        logInfo(.llm, "✅ Gemini processing completed in \(String(format: "%.3f", geminiTime ?? 0))s")
-                        logInfo(.llm, "📝 Reformatted output: \"\(reformattedText)\"")
-                        logInfo(.performance, "🏁 Total pipeline time: \(String(format: "%.3f", totalTime ?? 0))s (Whisper: \(String(format: "%.3f", whisperTime ?? 0))s + Gemini: \(String(format: "%.3f", geminiTime ?? 0))s)")
-                        
-                        self.lastTranscription = reformattedText
-                        
-                        // Store the processed text
-                        AppDelegate.lastProcessedText = reformattedText
-                        logDebug(.storage, "Stored processed text: \(reformattedText.count) characters")
-                        
-                        self.copyToClipboard(text: reformattedText)
-                        
-                        logInfo(.audio, "✅ Full transcription pipeline complete with processing")
-                    } else {
-                        // If processing failed, use original transcription
-                        logWarning(.llm, "❌ Gemini processing failed, falling back to original transcription")
-                        logInfo(.performance, "🏁 Pipeline completed with fallback - total time: \(String(format: "%.3f", totalTime ?? 0))s")
-                        
-                        self.lastTranscription = transcription
-                        
-                        // Store original as processed text since processing failed
-                        AppDelegate.lastProcessedText = transcription
-                        logDebug(.storage, "Stored processed text (fallback to original): \(transcription.count) characters")
-                        
-                        self.copyToClipboard(text: transcription)
-                        
-                        logInfo(.audio, "✅ Transcription pipeline complete (fallback to original)")
-                    }
+            // Pass context to existing reformatText method if available
+            if self.isContextualWorkflow {
+                WritingStyleManager.shared.reformatTextWithContext(
+                    transcription, 
+                    withStyle: self.selectedWritingStyle,
+                    context: self.contextualClipboardContent
+                ) { reformattedText in
+                    self.handleProcessingResult(reformattedText, originalText: transcription, processingType: "contextual")
+                }
+            } else {
+                WritingStyleManager.shared.reformatText(
+                    transcription, withStyle: self.selectedWritingStyle
+                ) { reformattedText in
+                    self.handleProcessingResult(reformattedText, originalText: transcription, processingType: "style/translation")
                 }
             }
             
@@ -615,6 +644,8 @@ class AudioRecorder: ObservableObject {
                     self.isTranscribing = false
                     self.isReformattingWithGemini = false
                     self.statusDescription = "Ready"
+                    self.isContextualWorkflow = false
+                    self.contextualClipboardContent = ""
                     self.onStatusUpdate?()
                     
                     // Use original transcription as fallback
@@ -624,6 +655,142 @@ class AudioRecorder: ObservableObject {
                         self.copyToClipboard(text: transcription)
                     }
                 }
+            }
+        }
+    }
+
+    // MARK: - Contextual Processing with Clipboard Content
+    
+    func processWithClipboardContext() {
+        logInfo(.audio, "🔄 Contextual processing workflow triggered")
+        
+        // If already in contextual workflow, ignore repeated calls
+        if isContextualWorkflow {
+            logInfo(.audio, "🔄 Contextual workflow already active - ignoring repeated call")
+            return
+        }
+        
+        // Check if already recording - if so, stop current recording first
+        if isRecording {
+            logInfo(.audio, "📴 Stopping current recording for contextual processing")
+            stopRecording()
+            // Wait a moment for recording to stop properly
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                self.startContextualWorkflow()
+            }
+            return
+        }
+        
+        startContextualWorkflow()
+    }
+    
+    private func startContextualWorkflow() {
+        logInfo(.audio, "🎯 Starting contextual workflow...")
+        
+        // First, try to get selected text from active application
+        if let selectedText = accessibilityManager.getSelectedText(), !selectedText.isEmpty {
+            logInfo(.audio, "✅ Using selected text as context: \(selectedText.count) characters")
+            contextualClipboardContent = selectedText
+            
+            ToastManager.shared.showToast(
+                message: "Using selected text as context. Speak your response now...",
+                preview: String(selectedText.prefix(100)) + (selectedText.count > 100 ? "..." : "")
+            )
+        } else {
+            // Fallback: get content from clipboard
+            logInfo(.audio, "📋 No selected text found, falling back to clipboard content")
+            let clipboard = NSPasteboard.general
+            if let clipboardContent = clipboard.string(forType: .string), !clipboardContent.isEmpty {
+                contextualClipboardContent = clipboardContent
+                logInfo(.audio, "✅ Using clipboard content as context: \(clipboardContent.count) characters")
+                
+                ToastManager.shared.showToast(
+                    message: "Using clipboard content as context. Speak your response now...",
+                    preview: String(clipboardContent.prefix(100)) + (clipboardContent.count > 100 ? "..." : "")
+                )
+            } else {
+                logWarning(.audio, "❌ No context available (no selected text or clipboard content)")
+                ToastManager.shared.showToast(
+                    message: "No context available. Speaking voice-only...",
+                    preview: ""
+                )
+                contextualClipboardContent = ""
+            }
+        }
+        
+        // Set contextual workflow flag
+        isContextualWorkflow = true
+        
+        // Start voice recording
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
+            self.startRecording()
+        }
+    }
+    
+    private func handleProcessingResult(_ reformattedText: String?, originalText: String, processingType: String) {
+        let totalTime = endTiming("llm_processing")
+        logInfo(.performance, "🏁 Total pipeline time: \(String(format: "%.3f", totalTime ?? 0))s")
+        
+        DispatchQueue.main.async {
+            // Always reset status and contextual state
+            defer {
+                self.isTranscribing = false
+                self.isReformattingWithGemini = false
+                self.statusDescription = "Ready"
+                
+                // Clean contextual state
+                let wasContextual = self.isContextualWorkflow
+                self.isContextualWorkflow = false
+                self.contextualClipboardContent = ""
+                
+                if wasContextual {
+                    logInfo(.audio, "🧹 Contextual workflow state cleaned up")
+                }
+                
+                self.onStatusUpdate?()
+                
+                // Play completion sound with logging
+                logDebug(.audio, "🔊 Playing completion sound")
+                
+                if let sound = NSSound(named: "Tink") {
+                    sound.volume = 1.2
+                    sound.play()
+                    logDebug(.audio, "✅ Tink sound played")
+                } else {
+                    NSSound.beep()
+                    logDebug(.audio, "🔔 System beep played")
+                }
+            }
+            
+            if let processedText = reformattedText {
+                logInfo(.audio, "✅ \(processingType) processing completed in \(String(format: "%.3f", totalTime ?? 0))s")
+                logInfo(.performance, "🏁 Total pipeline time: \(String(format: "%.3f", totalTime ?? 0))s")
+                
+                self.lastTranscription = processedText
+                AppDelegate.lastProcessedText = processedText
+                
+                // Copy result to clipboard using copyToClipboard for auto-paste functionality
+                self.copyToClipboard(text: processedText)
+                
+                // Show success toast
+                ToastManager.shared.showToast(
+                    message: self.isContextualWorkflow ? "Contextual response generated" : "Processing complete",
+                    preview: processedText
+                )
+                
+                logInfo(.audio, "✅ \(processingType) workflow complete - response copied to clipboard")
+            } else {
+                logError(.audio, "❌ \(processingType) processing failed")
+                
+                // Fallback to original transcription
+                self.lastTranscription = originalText
+                AppDelegate.lastProcessedText = originalText
+                self.copyToClipboard(text: originalText)
+                
+                ToastManager.shared.showToast(
+                    message: "Processing failed - using voice text", 
+                    preview: originalText
+                )
             }
         }
     }
