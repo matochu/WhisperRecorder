@@ -31,7 +31,7 @@ class ToastWindow: NSWindow {
         toastView = NSHostingView(rootView: ToastView(
             message: ToastManager.shared.message,
             preview: ToastManager.shared.preview,
-            isContextual: ToastManager.shared.isContextual,
+            toastType: ToastManager.shared.toastType,
             isShowing: toastBinding
         ))
         
@@ -47,7 +47,7 @@ class ToastWindow: NSWindow {
         toastView.rootView = ToastView(
             message: ToastManager.shared.message,
             preview: ToastManager.shared.preview,
-            isContextual: ToastManager.shared.isContextual,
+            toastType: ToastManager.shared.toastType,
             isShowing: toastBinding
         )
     }

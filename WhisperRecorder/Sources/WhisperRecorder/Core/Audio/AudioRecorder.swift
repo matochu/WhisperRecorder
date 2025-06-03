@@ -710,7 +710,7 @@ class AudioRecorder: ObservableObject {
             ToastManager.shared.showToast(
                 message: "Context: Selected text",
                 preview: String(selectedText.prefix(300)),  // Show more text
-                isContextual: true
+                type: .contextual
             )
         } else {
             // Fallback: get content from clipboard
@@ -723,14 +723,14 @@ class AudioRecorder: ObservableObject {
                 ToastManager.shared.showToast(
                     message: "Context: Clipboard",
                     preview: String(clipboardContent.prefix(300)),  // Show more text
-                    isContextual: true
+                    type: .contextual
                 )
             } else {
                 logWarning(.audio, "❌ No context available (no selected text or clipboard content)")
                 ToastManager.shared.showToast(
                     message: "Voice only",
                     preview: "",
-                    isContextual: false  // No context, so no red border
+                    type: .normal  // No context, so no red border
                 )
                 contextualClipboardContent = ""
             }
@@ -793,7 +793,8 @@ class AudioRecorder: ObservableObject {
                 // Show success toast
                 ToastManager.shared.showToast(
                     message: self.isContextualWorkflow ? "Contextual response generated" : "Processing complete",
-                    preview: processedText
+                    preview: processedText, 
+                    type: .normal
                 )
                 
                 logInfo(.audio, "✅ \(processingType) workflow complete - response copied to clipboard")
@@ -807,7 +808,8 @@ class AudioRecorder: ObservableObject {
                 
                 ToastManager.shared.showToast(
                     message: "Processing failed - using voice text", 
-                    preview: originalText
+                    preview: originalText,
+                    type: .error
                 )
             }
         }

@@ -197,6 +197,6 @@ struct ActionsCard: View {
         
         // Show toast with full text (no truncation)
         logInfo(.ui, "🎯 [TOAST] Showing toast: '\(toastMessage)' with full text: \(text.count) chars")
-        ToastManager.shared.showToast(message: toastMessage, preview: text)
+        ToastManager.shared.showToast(message: toastMessage, preview: text, type: .normal)
     }
 } 

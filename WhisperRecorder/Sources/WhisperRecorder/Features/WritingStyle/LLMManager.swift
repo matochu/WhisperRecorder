@@ -784,7 +784,7 @@ class LLMManager: ObservableObject {
             logError(.llm, "LLM Error: \(error)")
             
             // Show toast notification for immediate feedback (Method A)
-            ToastManager.shared.showToast(message: "LLM Error", preview: error)
+            ToastManager.shared.showErrorToast(message: error)
         }
     }
     

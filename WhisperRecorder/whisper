@@ -27,6 +27,8 @@ show_help() {
     echo "  build              Build WhisperRecorder.app (safe by default)"
     echo "  build-debug        Build WhisperRecorder.app with debug mode enabled"
     echo "  clean              Clean all build artifacts"
+    echo "  release            Build, sign and package for distribution (Apple Silicon)"
+    echo "  notarize           Notarize signed DMG for distribution"
     echo ""
     echo -e "${GREEN}🚀 Run Commands:${NC}"
     echo "  run                Run WhisperRecorder.app (safe by default)"
@@ -43,11 +45,13 @@ show_help() {
     echo -e "${GREEN}ℹ️  Info Commands:${NC}"
     echo "  help               Show this help"
     echo "  version            Show version info"
+    echo "  icon               Regenerate app icon"
     echo ""
     echo -e "${YELLOW}Examples:${NC}"
     echo "  ./whisper build    # Build the app"
     echo "  ./whisper run      # Run the app"
     echo "  ./whisper debug    # Debug interactively"
+    echo "  ./whisper release  # Build and package for distribution"
     echo "  ./whisper cleanup  # Emergency cleanup"
 }
 
@@ -116,8 +120,8 @@ cmd_build() {
     create_lockfile "build"
     
     echo "Starting build process..."
-    # Let package_manual.sh handle the entire build process
-    SKIP_CHECKS=1 ./package_manual.sh
+    # Use our simplified package.sh
+    SKIP_CHECKS=1 ./package.sh
     
     if [ -d "WhisperRecorder.app" ]; then
         echo -e "${GREEN}✅ Build successful!${NC}"
@@ -141,8 +145,8 @@ cmd_build_debug() {
     create_lockfile "build-debug"
     
     echo "Starting debug build process..."
-    # Let package_manual.sh handle the entire build process with debug flag
-    DEBUG_BUILD=1 SKIP_CHECKS=1 ./package_manual.sh
+    # Use our simplified package.sh with debug flag
+    DEBUG_BUILD=1 SKIP_CHECKS=1 ./package.sh
     
     if [ -d "WhisperRecorder.app" ]; then
         echo -e "${GREEN}✅ Debug build successful!${NC}"
@@ -319,6 +323,165 @@ cmd_clean() {
     echo -e "${GREEN}✅ Clean completed${NC}"
 }
 
+# Release command
+cmd_release() {
+    echo -e "${GREEN}🚀 Building WhisperRecorder Release${NC}"
+    echo "=================================="
+    
+    if ! check_processes; then
+        kill_processes || exit 1
+    fi
+    
+    create_lockfile "release"
+    
+    # Clean everything first
+    echo "1. Cleaning previous builds..."
+    rm -rf .build
+    rm -rf WhisperRecorder.app
+    rm -f WhisperRecorder
+    rm -f WhisperRecorder.zip
+    rm -f WhisperRecorder.dmg
+    
+    # Create fresh icon
+    echo "2. Creating app icon..."
+    if [ -f "create_icon.sh" ]; then
+        ./create_icon.sh
+    else
+        echo "⚠️  Warning: create_icon.sh not found"
+    fi
+    
+    # Build and package the app
+    echo "3. Building and packaging..."
+    SKIP_CHECKS=1 ./package.sh
+    
+    if [ ! -d "WhisperRecorder.app" ]; then
+        echo -e "${RED}❌ App bundle not created${NC}"
+        exit 1
+    fi
+    
+    echo -e "${GREEN}✅ Build successful!${NC}"
+    
+    # Sign the app
+    echo "4. Signing and packaging..."
+    
+    # Check for signing identity
+    read -p "Enter your Developer ID (or press Enter to skip signing): " SIGNING_IDENTITY
+    
+    if [ -n "$SIGNING_IDENTITY" ]; then
+        echo "🔐 Signing with: $SIGNING_IDENTITY"
+        ./sign_app.sh "$SIGNING_IDENTITY"
+    else
+        echo "⚠️  Creating unsigned package..."
+        ./sign_app.sh
+    fi
+    
+    # Show results
+    echo ""
+    echo -e "${GREEN}🎉 Release package created!${NC}"
+    echo "================================"
+    
+    if [ -f "WhisperRecorder.dmg" ]; then
+        echo -e "${GREEN}✅ Signed DMG:${NC} WhisperRecorder.dmg"
+        echo "📏 Size: $(du -h WhisperRecorder.dmg | cut -f1)"
+    elif [ -f "WhisperRecorder.zip" ]; then
+        echo -e "${YELLOW}✅ Unsigned ZIP:${NC} WhisperRecorder.zip"
+        echo "📏 Size: $(du -h WhisperRecorder.zip | cut -f1)"
+    fi
+    
+    # Show app architecture info
+    if [ -f "WhisperRecorder.app/Contents/MacOS/WhisperRecorder.bin" ]; then
+        echo ""
+        echo -e "${BLUE}🏗️  Architecture Info:${NC}"
+        lipo -info "WhisperRecorder.app/Contents/MacOS/WhisperRecorder.bin" || echo "Could not determine architecture"
+    fi
+    
+    echo ""
+    echo -e "${BLUE}📋 Release Checklist:${NC}"
+    echo "  ✅ Apple Silicon (arm64) optimized"
+    echo "  ✅ App built and packaged"
+    echo "  ✅ Fresh app icon included"
+    if [ -f "WhisperRecorder.dmg" ]; then
+        echo "  ✅ App signed and notarized-ready"
+        echo "  📤 Ready for distribution!"
+    else
+        echo "  ⚠️  App not signed (ok for testing)"
+        echo "  📤 Ready for internal testing"
+    fi
+    
+    echo ""
+    echo -e "${YELLOW}💡 Next steps:${NC}"
+    if [ -f "WhisperRecorder.dmg" ]; then
+        echo "  • Notarize: xcrun notarytool submit WhisperRecorder.dmg ..."
+        echo "  • Distribute: Upload to website or share DMG"
+    else
+        echo "  • For signed release: ./whisper release (with valid Developer ID)"
+        echo "  • For testing: Share WhisperRecorder.zip"
+    fi
+}
+
+# Icon command
+cmd_icon() {
+    echo -e "${GREEN}🎨 Regenerating App Icon${NC}"
+    echo "========================="
+    
+    if [ -f "create_icon.sh" ]; then
+        ./create_icon.sh
+        echo -e "${GREEN}✅ App icon regenerated!${NC}"
+        echo ""
+        echo "💡 To use the new icon, rebuild the app:"
+        echo "   ./whisper build"
+    else
+        echo -e "${RED}❌ create_icon.sh not found${NC}"
+        exit 1
+    fi
+}
+
+# Notarize command
+cmd_notarize() {
+    echo -e "${GREEN}🔐 Notarizing WhisperRecorder DMG${NC}"
+    echo "================================="
+    
+    if [ ! -f "WhisperRecorder.dmg" ]; then
+        echo -e "${RED}❌ WhisperRecorder.dmg not found${NC}"
+        echo "Run './whisper release' with Developer ID first"
+        exit 1
+    fi
+    
+    read -p "Enter your Apple ID email: " APPLE_ID
+    read -p "Enter your Team ID: " TEAM_ID
+    read -p "Enter your app-specific password: " -s APP_PASSWORD
+    echo ""
+    
+    if [ -z "$APPLE_ID" ] || [ -z "$TEAM_ID" ] || [ -z "$APP_PASSWORD" ]; then
+        echo -e "${RED}❌ All fields are required${NC}"
+        exit 1
+    fi
+    
+    echo "🚀 Submitting for notarization..."
+    xcrun notarytool submit "WhisperRecorder.dmg" \
+        --apple-id "$APPLE_ID" \
+        --team-id "$TEAM_ID" \
+        --password "$APP_PASSWORD" \
+        --wait
+    
+    if [ $? -eq 0 ]; then
+        echo -e "${GREEN}✅ Notarization successful!${NC}"
+        
+        echo "🔗 Stapling notarization..."
+        xcrun stapler staple "WhisperRecorder.dmg"
+        
+        echo -e "${GREEN}🎉 Ready for distribution!${NC}"
+        echo "================================"
+        echo "  ✅ App signed"
+        echo "  ✅ App notarized"
+        echo "  ✅ Notarization stapled"
+        echo "  📤 WhisperRecorder.dmg ready for public distribution"
+    else
+        echo -e "${RED}❌ Notarization failed${NC}"
+        exit 1
+    fi
+}
+
 # Main command dispatcher
 case "${1:-help}" in
     build)
@@ -326,6 +489,9 @@ case "${1:-help}" in
         ;;
     build-debug)
         cmd_build_debug
+        ;;
+    release)
+        cmd_release
         ;;
     run|start)
         cmd_run
@@ -347,6 +513,12 @@ case "${1:-help}" in
         ;;
     version)
         show_version
+        ;;
+    icon)
+        cmd_icon
+        ;;
+    notarize)
+        cmd_notarize
         ;;
     help|--help|-h)
         show_help

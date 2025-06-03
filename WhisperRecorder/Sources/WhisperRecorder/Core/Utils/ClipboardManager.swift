@@ -94,7 +94,7 @@ class ClipboardManager: ObservableObject {
             }
             
             // Show toast with full text (no truncation)
-            ToastManager.shared.showToast(message: "Copied to clipboard", preview: text)
+            ToastManager.shared.showToast(message: "Copied to clipboard", preview: text, type: .normal)
             
             // Auto-paste to active input
             if autoPasteEnabled {

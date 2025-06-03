@@ -119,8 +119,31 @@ if [ -n "$KEYBOARD_SHORTCUTS_BUNDLE" ]; then
     echo "✅ KeyboardShortcuts bundle copied"
 fi
 
+# Copy app icon to Resources
+echo "9. Copying app icon..."
+if [ -f "AppIcon.icns" ]; then
+    cp "AppIcon.icns" "$RESOURCES/"
+    echo "✅ App icon copied successfully"
+else
+    echo "⚠️  Warning: AppIcon.icns not found. Run ./create_icon.sh first"
+fi
+
+# Remove any whisper models from the bundle (they will be downloaded on demand)
+echo "10. Removing any whisper models from bundle..."
+rm -f "$RESOURCES/ggml-*.bin"
+
+# Add a note about downloading models
+echo "11. Creating README for model downloads..."
+cat > "$RESOURCES/README.txt" << EOF
+WhisperRecorder will download models on demand.
+You will be prompted to select and download a model when you first run the application.
+EOF
+
+echo "📝 Note: WhisperRecorder will download models on demand."
+echo "   The app will prompt the user to select and download models when needed."
+
 # Create Info.plist
-echo "9. Creating Info.plist..."
+echo "12. Creating Info.plist..."
 cat > "$CONTENTS/Info.plist" << EOF
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -128,16 +151,28 @@ cat > "$CONTENTS/Info.plist" << EOF
 <dict>
     <key>CFBundleExecutable</key>
     <string>WhisperRecorder.bin</string>
+    <key>CFBundleIconFile</key>
+    <string>AppIcon</string>
     <key>CFBundleIdentifier</key>
     <string>com.whisper.WhisperRecorder</string>
+    <key>CFBundleInfoDictionaryVersion</key>
+    <string>6.0</string>
     <key>CFBundleName</key>
     <string>$APP_NAME</string>
     <key>CFBundlePackageType</key>
     <string>APPL</string>
     <key>CFBundleShortVersionString</key>
     <string>$APP_VERSION</string>
+    <key>CFBundleVersion</key>
+    <string>1</string>
+    <key>LSMinimumSystemVersion</key>
+    <string>12.0</string>
+    <key>NSHumanReadableCopyright</key>
+    <string>Copyright © 2025. All rights reserved.</string>
     <key>NSMicrophoneUsageDescription</key>
     <string>WhisperRecorder needs access to your microphone to record audio for transcription.</string>
+    <key>NSPrincipalClass</key>
+    <string>NSApplication</string>
     <key>LSUIElement</key>
     <true/>
     <key>LSEnvironment</key>
@@ -152,7 +187,7 @@ cat > "$CONTENTS/Info.plist" << EOF
 EOF
 
 # Create launcher shell script
-echo "10. Creating launcher shell script..."
+echo "13. Creating launcher shell script..."
 cat > "$MACOS/$APP_NAME.sh" << EOF
 #!/bin/bash
 DIR="\$( cd "\$( dirname "\${BASH_SOURCE[0]}" )" && pwd )"
@@ -165,7 +200,7 @@ EOF
 chmod +x "$MACOS/$APP_NAME.sh"
 
 # Create C launcher
-echo "11. Creating C launcher..."
+echo "14. Creating C launcher..."
 cat > launcher.c << EOF
 #include <stdlib.h>
 #include <stdio.h>
@@ -201,11 +236,11 @@ int main(int argc, char *argv[]) {
 EOF
 
 # Compile launcher
-echo "12. Compiling launcher..."
+echo "15. Compiling launcher..."
 gcc -mmacosx-version-min=12.0 -arch arm64 -o "$MACOS/$APP_NAME" launcher.c
 
 # Fix library paths
-echo "13. Fixing library paths..."
+echo "16. Fixing library paths..."
 if [ "$DEBUG_BUILD" = "1" ]; then
     echo "   🐛 SKIPPING library path fixes for debug build (to preserve code signing)"
     echo "   📝 Debug builds will use DYLD_LIBRARY_PATH from launcher script"
@@ -214,7 +249,7 @@ else
     install_name_tool -add_rpath "@executable_path/../Frameworks" "$MACOS/$APP_NAME.bin"
 fi
 
-echo "14. Updating dylib references..."
+echo "17. Updating dylib references..."
 if [ "$DEBUG_BUILD" = "1" ]; then
     echo "   🐛 SKIPPING dylib reference updates for debug build (to preserve code signing)"
 else
@@ -229,7 +264,7 @@ else
 fi
 
 # Clean up
-echo "15. Cleaning up temporary files..."
+echo "18. Cleaning up temporary files..."
 rm -f launcher.c
 rm -f WhisperRecorder
 

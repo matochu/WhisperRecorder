@@ -232,6 +232,8 @@ INSTRUCTIONS:
 - No explanations unless asked
 - No extra text or pleasantries
 - Just the answer or response to what was asked
+- Save format as context had been provided
+- Do not explain, comment, or reply for own actions if not asked
 
 Answer directly:
 """

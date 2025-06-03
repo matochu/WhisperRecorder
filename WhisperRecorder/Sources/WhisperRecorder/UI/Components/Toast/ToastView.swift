@@ -4,7 +4,7 @@ import SwiftUI
 struct ToastView: View {
     let message: String
     let preview: String
-    let isContextual: Bool
+    let toastType: ToastType
     @Binding var isShowing: Bool
     
     var body: some View {
@@ -22,13 +22,35 @@ struct ToastView: View {
                     .overlay(
                         RoundedRectangle(cornerRadius: 6)
                             .stroke(
-                                isContextual ? Color.red.opacity(0.3) : Color(.tertiaryLabelColor).opacity(0.5),  // More transparent red border
-                                lineWidth: isContextual ? 1.5 : 1
-                            )  // Red border for contextual content
+                                borderColor,
+                                lineWidth: borderWidth
+                            )
                     )
             )
             .scaleEffect(isShowing ? 1.0 : 0.9)
             .opacity(isShowing ? 0.75 : 0.0)  // Reduced opacity from 0.92 to 0.75
             .animation(.easeInOut(duration: 0.15), value: isShowing)
+    }
+    
+    private var borderColor: Color {
+        switch toastType {
+        case .error:
+            return Color(red: 0.5, green: 0.0, blue: 0.0)  // Dark red color
+        case .contextual:
+            return Color.red.opacity(0.3)  // Light red for contextual
+        case .normal:
+            return Color(.tertiaryLabelColor).opacity(0.5)  // Default border
+        }
+    }
+    
+    private var borderWidth: CGFloat {
+        switch toastType {
+        case .error:
+            return 2.0  // Thicker border for errors
+        case .contextual:
+            return 1.5
+        case .normal:
+            return 1.0
+        }
     }
 } 
