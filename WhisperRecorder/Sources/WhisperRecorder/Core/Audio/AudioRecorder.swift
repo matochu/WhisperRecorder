@@ -61,6 +61,10 @@ class AudioRecorder: ObservableObject {
         return whisperWrapper.isModelLoaded()
     }
 
+    var isInContextualWorkflow: Bool {
+        return isContextualWorkflow
+    }
+
     private init() {
         logInfo(.audio, "AudioRecorder initializing")
 
@@ -169,54 +173,54 @@ class AudioRecorder: ObservableObject {
         inputNode.installTap(onBus: 0, bufferSize: 4096, format: nativeFormat) {
             [weak self] buffer, time in
             guard let self = self, self.isRecording else { return }
-
-            // Create a converter to Whisper's format if needed
-            if nativeFormat.sampleRate != self.sampleRate {
-                // Create a new AVAudioConverter to convert the sample rate
-                guard let converter = AVAudioConverter(from: nativeFormat, to: whisperFormat) else {
+            
+        // Create a converter to Whisper's format if needed
+        if nativeFormat.sampleRate != self.sampleRate {
+            // Create a new AVAudioConverter to convert the sample rate
+            guard let converter = AVAudioConverter(from: nativeFormat, to: whisperFormat) else {
                     logError(.audio, "Failed to create audio converter")
-                    return
-                }
+                return
+            }
 
-                // Calculate the new frame count based on the ratio of sample rates
-                let ratio = Double(whisperFormat.sampleRate) / Double(nativeFormat.sampleRate)
-                let frameCount = AVAudioFrameCount(Double(buffer.frameLength) * ratio)
+            // Calculate the new frame count based on the ratio of sample rates
+            let ratio = Double(whisperFormat.sampleRate) / Double(nativeFormat.sampleRate)
+            let frameCount = AVAudioFrameCount(Double(buffer.frameLength) * ratio)
 
-                guard
-                    let convertedBuffer = AVAudioPCMBuffer(
-                        pcmFormat: whisperFormat, frameCapacity: frameCount)
-                else {
+            guard
+                let convertedBuffer = AVAudioPCMBuffer(
+                    pcmFormat: whisperFormat, frameCapacity: frameCount)
+            else {
                     logError(.audio, "Failed to create output buffer for conversion")
-                    return
-                }
+                return
+            }
 
-                // Perform the conversion
-                var error: NSError?
-                let inputBlock: AVAudioConverterInputBlock = { inNumPackets, outStatus in
-                    outStatus.pointee = .haveData
-                    return buffer
-                }
+            // Perform the conversion
+            var error: NSError?
+            let inputBlock: AVAudioConverterInputBlock = { inNumPackets, outStatus in
+                outStatus.pointee = .haveData
+                return buffer
+            }
 
-                converter.convert(to: convertedBuffer, error: &error, withInputFrom: inputBlock)
+            converter.convert(to: convertedBuffer, error: &error, withInputFrom: inputBlock)
 
-                if let error = error {
+            if let error = error {
                     logError(.audio, "Error converting audio: \(error)")
-                    return
+                return
+            }
+
+            // Process the converted buffer
+            if let channelData = convertedBuffer.floatChannelData,
+                convertedBuffer.frameLength > 0
+            {
+                let channelDataValue = channelData.pointee
+                let frames = convertedBuffer.frameLength
+
+                // Append the converted audio data to our buffer
+                var samples = [Float](repeating: 0, count: Int(frames))
+                for i in 0..<Int(frames) {
+                    samples[i] = channelDataValue[i]
                 }
-
-                // Process the converted buffer
-                if let channelData = convertedBuffer.floatChannelData,
-                    convertedBuffer.frameLength > 0
-                {
-                    let channelDataValue = channelData.pointee
-                    let frames = convertedBuffer.frameLength
-
-                    // Append the converted audio data to our buffer
-                    var samples = [Float](repeating: 0, count: Int(frames))
-                    for i in 0..<Int(frames) {
-                        samples[i] = channelDataValue[i]
-                    }
-
+                
                     self.audioBuffer.append(contentsOf: samples)
 
                     // Check if buffer exceeds maximum size and trim if needed
@@ -232,29 +236,29 @@ class AudioRecorder: ObservableObject {
                         logInfo(.audio,
                             "Audio buffer size: \(self.audioBuffer.count) samples (\(self.audioBuffer.count / 16000) seconds)"
                         )
-                    }
                 }
-            } else {
-                // No conversion needed, process directly
-                if let channelData = buffer.floatChannelData, buffer.frameLength > 0 {
-                    let channelDataValue = channelData.pointee
-                    let frames = buffer.frameLength
+            }
+        } else {
+            // No conversion needed, process directly
+            if let channelData = buffer.floatChannelData, buffer.frameLength > 0 {
+                let channelDataValue = channelData.pointee
+                let frames = buffer.frameLength
 
-                    // Append the audio data to our buffer
-                    var samples = [Float](repeating: 0, count: Int(frames))
-                    for i in 0..<Int(frames) {
-                        samples[i] = channelDataValue[i]
-                    }
+                // Append the audio data to our buffer
+                var samples = [Float](repeating: 0, count: Int(frames))
+                for i in 0..<Int(frames) {
+                    samples[i] = channelDataValue[i]
+                }
 
                     self.audioBuffer.append(contentsOf: samples)
 
-                    // Check if buffer exceeds maximum size and trim if needed
-                    if self.audioBuffer.count > self.maxBufferSize {
+        // Check if buffer exceeds maximum size and trim if needed
+        if self.audioBuffer.count > self.maxBufferSize {
                         logInfo(.audio,
                             "Audio buffer exceeding maximum size (\(self.maxBufferSize) samples), trimming oldest data"
                         )
-                        self.audioBuffer = Array(self.audioBuffer.suffix(self.maxBufferSize))
-                    }
+            self.audioBuffer = Array(self.audioBuffer.suffix(self.maxBufferSize))
+        }
 
                     // Periodically log buffer size
                     if self.audioBuffer.count % 16000 == 0 {
@@ -402,40 +406,39 @@ class AudioRecorder: ObservableObject {
             [weak self] _ in
             guard let self = self else { return }
             self.recordingDurationSeconds += 1
-            self.onStatusUpdate?()
         }
 
         do {
             guard let audioEngine = getAudioEngine() else {  // Changed to use getter
                 logError(.audio, "Audio engine not initialized (lazy init failed)")
                 return
-            }
+                }
 
-            // If the audio engine is already running, stop it first
-            if audioEngine.isRunning {
+                // If the audio engine is already running, stop it first
+                if audioEngine.isRunning {
                 logInfo(.audio, "Audio engine already running, stopping it first")
-                audioEngine.stop()
-            }
+                    audioEngine.stop()
+                }
 
-            // Remove any existing taps
+                // Remove any existing taps
             logInfo(.audio, "Removing existing tap")
             getInputNode()?.removeTap(onBus: 0)  // Changed to use getter
 
-            // Set up the audio tap
+                // Set up the audio tap
             logInfo(.audio, "Setting up audio tap")  // Changed comment
             setupAudioTap()
 
-            // Prepare and start the audio engine
+                // Prepare and start the audio engine
             logInfo(.audio, "Starting audio engine")
-            audioEngine.prepare()
-            try audioEngine.start()
+                audioEngine.prepare()
+                try audioEngine.start()
             isRecording = true
             statusDescription = "Recording..."
             logInfo(.audio, "Recording started successfully")
             onStatusUpdate?()
-        } catch {
+            } catch {
             logError(.audio, "Failed to start audio engine: \(error)")
-            // If recording failed, restore system audio
+                // If recording failed, restore system audio
             systemAudioManager.unmuteSystemAudio()
             showRecordingErrorAlert(error: error)
         }
@@ -468,6 +471,11 @@ class AudioRecorder: ObservableObject {
 
         // Restore system audio after stopping recording
         systemAudioManager.unmuteSystemAudio()
+
+        // Hide contextual toast when recording stops
+        if isContextualWorkflow {
+            ToastManager.shared.hideToast()
+        }
 
         statusDescription = "Ready"
         logInfo(.audio, "Recording stopped. Buffer size: \(audioBuffer.count) samples")
@@ -581,7 +589,7 @@ class AudioRecorder: ObservableObject {
                     self.statusDescription = "Ready"
                     self.onStatusUpdate?()
                     logInfo(.audio, "✅ Transcription pipeline complete (no processing needed)")
-                    
+
                     // Play completion sound with logging
                     logDebug(.audio, "🔊 Playing completion sound")
                     
@@ -602,7 +610,7 @@ class AudioRecorder: ObservableObject {
                 if self.isContextualWorkflow {
                     self.statusDescription = "Processing with context..."
                 } else {
-                    self.statusDescription = "Processing..."
+                self.statusDescription = "Processing..."
                 }
                 self.isReformattingWithGemini = true
                 self.onStatusUpdate?()
@@ -630,11 +638,11 @@ class AudioRecorder: ObservableObject {
                     self.handleProcessingResult(reformattedText, originalText: transcription, processingType: "contextual")
                 }
             } else {
-                WritingStyleManager.shared.reformatText(
-                    transcription, withStyle: self.selectedWritingStyle
-                ) { reformattedText in
+            WritingStyleManager.shared.reformatText(
+                transcription, withStyle: self.selectedWritingStyle
+            ) { reformattedText in
                     self.handleProcessingResult(reformattedText, originalText: transcription, processingType: "style/translation")
-                }
+                        }
             }
             
             // Safety fallback: If callback never gets called, reset state after 30 seconds
@@ -653,8 +661,8 @@ class AudioRecorder: ObservableObject {
                         self.lastTranscription = transcription
                         AppDelegate.lastProcessedText = transcription
                         self.copyToClipboard(text: transcription)
-                    }
-                }
+        }
+    }
             }
         }
     }
@@ -663,6 +671,13 @@ class AudioRecorder: ObservableObject {
     
     func processWithClipboardContext() {
         logInfo(.audio, "🔄 Contextual processing workflow triggered")
+            
+        // If already in contextual workflow and recording, stop the recording
+        if isContextualWorkflow && isRecording {
+            logInfo(.audio, "🛑 Contextual workflow active and recording - stopping recording via shortcut")
+            stopRecording()
+            return
+        }
         
         // If already in contextual workflow, ignore repeated calls
         if isContextualWorkflow {
@@ -693,8 +708,9 @@ class AudioRecorder: ObservableObject {
             contextualClipboardContent = selectedText
             
             ToastManager.shared.showToast(
-                message: "Using selected text as context. Speak your response now...",
-                preview: String(selectedText.prefix(100)) + (selectedText.count > 100 ? "..." : "")
+                message: "Context: Selected text",
+                preview: String(selectedText.prefix(300)),  // Show more text
+                isContextual: true
             )
         } else {
             // Fallback: get content from clipboard
@@ -705,14 +721,16 @@ class AudioRecorder: ObservableObject {
                 logInfo(.audio, "✅ Using clipboard content as context: \(clipboardContent.count) characters")
                 
                 ToastManager.shared.showToast(
-                    message: "Using clipboard content as context. Speak your response now...",
-                    preview: String(clipboardContent.prefix(100)) + (clipboardContent.count > 100 ? "..." : "")
+                    message: "Context: Clipboard",
+                    preview: String(clipboardContent.prefix(300)),  // Show more text
+                    isContextual: true
                 )
             } else {
                 logWarning(.audio, "❌ No context available (no selected text or clipboard content)")
                 ToastManager.shared.showToast(
-                    message: "No context available. Speaking voice-only...",
-                    preview: ""
+                    message: "Voice only",
+                    preview: "",
+                    isContextual: false  // No context, so no red border
                 )
                 contextualClipboardContent = ""
             }
@@ -724,8 +742,8 @@ class AudioRecorder: ObservableObject {
         // Start voice recording
         DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
             self.startRecording()
+            }
         }
-    }
     
     private func handleProcessingResult(_ reformattedText: String?, originalText: String, processingType: String) {
         let totalTime = endTiming("llm_processing")
@@ -751,15 +769,15 @@ class AudioRecorder: ObservableObject {
                 
                 // Play completion sound with logging
                 logDebug(.audio, "🔊 Playing completion sound")
-                
+        
                 if let sound = NSSound(named: "Tink") {
                     sound.volume = 1.2
                     sound.play()
                     logDebug(.audio, "✅ Tink sound played")
-                } else {
+        } else {
                     NSSound.beep()
                     logDebug(.audio, "🔔 System beep played")
-                }
+        }
             }
             
             if let processedText = reformattedText {
@@ -779,7 +797,7 @@ class AudioRecorder: ObservableObject {
                 )
                 
                 logInfo(.audio, "✅ \(processingType) workflow complete - response copied to clipboard")
-            } else {
+        } else {
                 logError(.audio, "❌ \(processingType) processing failed")
                 
                 // Fallback to original transcription

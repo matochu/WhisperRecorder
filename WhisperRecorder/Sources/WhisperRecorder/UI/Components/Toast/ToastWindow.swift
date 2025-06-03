@@ -7,7 +7,7 @@ class ToastWindow: NSWindow {
     
     init() {
         super.init(
-            contentRect: NSRect(x: 0, y: 0, width: 320, height: 50),  // Wider for 300px content + padding
+            contentRect: NSRect(x: 0, y: 0, width: 470, height: 50),  // Wider for 450px content + padding
             styleMask: [.borderless],
             backing: .buffered,
             defer: false
@@ -31,6 +31,7 @@ class ToastWindow: NSWindow {
         toastView = NSHostingView(rootView: ToastView(
             message: ToastManager.shared.message,
             preview: ToastManager.shared.preview,
+            isContextual: ToastManager.shared.isContextual,
             isShowing: toastBinding
         ))
         
@@ -46,6 +47,7 @@ class ToastWindow: NSWindow {
         toastView.rootView = ToastView(
             message: ToastManager.shared.message,
             preview: ToastManager.shared.preview,
+            isContextual: ToastManager.shared.isContextual,
             isShowing: toastBinding
         )
     }
@@ -56,12 +58,12 @@ class ToastWindow: NSWindow {
         
         // Calculate dynamic height based on text length
         let textLength = ToastManager.shared.preview.count
-        let estimatedLines = max(1, (textLength / 50) + 1) // Roughly 50 chars per line
+        let estimatedLines = max(1, (textLength / 75) + 1) // Roughly 75 chars per line (more for wider window)
         let dynamicHeight = min(200, max(50, estimatedLines * 20 + 20)) // 20px per line + padding
         
         // Convert screen coordinates for positioning
         let screenFrame = NSScreen.main?.frame ?? NSRect.zero
-        let windowSize = NSSize(width: 320, height: CGFloat(dynamicHeight))
+        let windowSize = NSSize(width: 470, height: CGFloat(dynamicHeight))  // Updated width
         
         // Position toast below and to the right of cursor
         let windowX = position.x + 20  // 20px to the right of cursor

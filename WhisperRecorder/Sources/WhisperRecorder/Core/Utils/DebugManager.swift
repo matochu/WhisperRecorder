@@ -215,7 +215,7 @@ class DebugManager {
                 fflush(stdout)
             }
             
-            startMemoryTracking()
+            // startMemoryTracking()
             log(.system, .info, "DebugManager initialized with configuration: stdout=\(configuration.enableStdoutOutput), console=\(configuration.enableConsoleOutput), file=\(configuration.enableFileOutput)")
         }
     }

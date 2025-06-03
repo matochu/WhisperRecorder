@@ -1,15 +1,17 @@
 import SwiftUI
 
-struct NewPopoverView: View {
+struct PopoverView: View {
     let audioRecorder: AudioRecorder
     @State private var refreshTrigger = false
     @State private var memoryUsage: UInt64 = 0
     @State private var selectedWritingStyleIndex = 0
     @State private var inputText: String = ""
     @State private var selectedLanguageCode: String
-
-    // Timer for updating memory usage
-    let memoryTimer = Timer.publish(every: 2, on: .main, in: .common).autoconnect()
+    
+    // Cached models for performance
+    @State private var cachedWhisperModels: [WhisperModel] = []
+    @State private var lastModelCacheUpdate = Date()
+    @State private var memoryTimer: Timer?
 
     init(audioRecorder: AudioRecorder) {
         self.audioRecorder = audioRecorder
@@ -26,12 +28,15 @@ struct NewPopoverView: View {
         }
         .frame(width: 340)  // Increased from 300px as per design
         .onAppear {
+            updateModelCache()
             setupInitialValues()
+            // Calculate memory on appear and start timer
+            memoryUsage = getMemoryUsage()
+            startMemoryTimer()
         }
         .onDisappear {
-        }
-        .onReceive(memoryTimer) { _ in
-            memoryUsage = getMemoryUsage()
+            // Stop timer when popover closes
+            stopMemoryTimer()
         }
     }
 
@@ -95,11 +100,9 @@ struct NewPopoverView: View {
         }
         .onChange(of: selectedWritingStyleIndex) { newValue in
             audioRecorder.selectedWritingStyle = WritingStyle.styles[newValue]
-            logDebug(.ui, "Selected writing style: \(audioRecorder.selectedWritingStyle.name)")
             
             // Save to UserDefaults to persist selection
             UserDefaults.standard.set(newValue, forKey: "selectedWritingStyleIndex")
-            logDebug(.ui, "💾 Saved writing style index: \(newValue)")
         }
         .onChange(of: selectedLanguageCode) { newValue in
             WritingStyleManager.shared.setTargetLanguage(newValue)
@@ -164,8 +167,8 @@ struct NewPopoverView: View {
                     .bold()
 
                 Picker("Model", selection: $selectedModelIndex) {
-                    ForEach(0..<WhisperWrapper.availableModels.count, id: \.self) { index in
-                        let model = WhisperWrapper.availableModels[index]
+                    ForEach(0..<cachedWhisperModels.count, id: \.self) { index in
+                        let model = cachedWhisperModels[index]
                         Text("\(model.displayName) (\(model.size)) - \(model.language)")
                             .tag(index)
                     }
@@ -201,11 +204,19 @@ struct NewPopoverView: View {
     @State private var selectedModelIndex = 0
     
     private func setupInitialValues() {
-        // Find current model index
-        if let index = WhisperWrapper.availableModels.firstIndex(where: {
+        // Find current model index using cached models
+        if let index = cachedWhisperModels.firstIndex(where: {
             $0.id == WhisperWrapper.shared.currentModel.id
         }) {
             selectedModelIndex = index
+        } else {
+            // Fallback: update cache and try again
+            updateModelCache()
+            if let index = cachedWhisperModels.firstIndex(where: {
+                $0.id == WhisperWrapper.shared.currentModel.id
+            }) {
+                selectedModelIndex = index
+            }
         }
 
         // Load writing style index from UserDefaults (instead of audioRecorder to avoid conflicts)
@@ -213,14 +224,12 @@ struct NewPopoverView: View {
         if savedStyleIndex < WritingStyle.styles.count {
             selectedWritingStyleIndex = savedStyleIndex
             audioRecorder.selectedWritingStyle = WritingStyle.styles[savedStyleIndex]
-            logDebug(.ui, "📱 Loaded saved writing style: \(audioRecorder.selectedWritingStyle.name) (index: \(savedStyleIndex))")
         } else {
             // Fallback to current audioRecorder value if no saved preference
             if let index = WritingStyle.styles.firstIndex(where: {
                 $0.id == audioRecorder.selectedWritingStyle.id
             }) {
                 selectedWritingStyleIndex = index
-                logDebug(.ui, "📱 Using current writing style: \(audioRecorder.selectedWritingStyle.name) (index: \(index))")
             }
         }
 
@@ -228,29 +237,79 @@ struct NewPopoverView: View {
         if WritingStyleManager.shared.hasApiKey() {
             inputText = WritingStyleManager.shared.getMaskedApiKey()
         }
-
+        
         // Initialize memory usage
         memoryUsage = getMemoryUsage()
     }
     
     private func useSelectedModel() {
-        let selectedModel = WhisperWrapper.availableModels[selectedModelIndex]
+        guard selectedModelIndex < cachedWhisperModels.count else {
+            logWarning(.ui, "Selected model index out of bounds")
+            return
+        }
+        
+        let selectedModel = cachedWhisperModels[selectedModelIndex]
         WhisperWrapper.shared.switchModel(to: selectedModel) { success in
             if !success {
                 // Model not found, need to download
                 WhisperWrapper.shared.downloadCurrentModel { _ in
                     refreshTrigger.toggle()
+                    updateMemoryAfterModelChange()
                 }
+            } else {
+                updateMemoryAfterModelChange()
             }
         }
     }
     
     private func downloadSelectedModel() {
-        let selectedModel = WhisperWrapper.availableModels[selectedModelIndex]
+        guard selectedModelIndex < cachedWhisperModels.count else {
+            logWarning(.ui, "Selected model index out of bounds")
+            return
+        }
+        
+        let selectedModel = cachedWhisperModels[selectedModelIndex]
         WhisperWrapper.shared.switchModel(to: selectedModel) { _ in
             WhisperWrapper.shared.downloadCurrentModel { _ in
                 refreshTrigger.toggle()
+                updateMemoryAfterModelChange()
             }
+        }
+    }
+
+    // MARK: - Model Cache Management
+    private func updateModelCache() {
+        // Only update if cache is old or empty
+        let now = Date()
+        if now.timeIntervalSince(lastModelCacheUpdate) < 5.0 && !cachedWhisperModels.isEmpty {
+            return
+        }
+        
+        cachedWhisperModels = WhisperWrapper.availableModels
+        lastModelCacheUpdate = now
+    }
+    
+    // MARK: - Memory Management
+    private func startMemoryTimer() {
+        memoryTimer = Timer.scheduledTimer(withTimeInterval: 30.0, repeats: true) { _ in
+            updateMemoryUsage()
+        }
+    }
+    
+    private func stopMemoryTimer() {
+        memoryTimer?.invalidate()
+        memoryTimer = nil
+    }
+    
+    private func updateMemoryUsage() {
+        let newMemory = getMemoryUsage()
+        memoryUsage = newMemory
+    }
+    
+    private func updateMemoryAfterModelChange() {
+        // Wait a bit for model to load, then update memory
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
+            updateMemoryUsage()
         }
     }
 } 

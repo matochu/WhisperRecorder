@@ -8,10 +8,27 @@ import Foundation
 class ClipboardManager: ObservableObject {
     static let shared = ClipboardManager()
     
-    @Published var autoPasteEnabled: Bool = true
+    @Published var autoPasteEnabled: Bool = true {
+        didSet {
+            // Save to UserDefaults whenever the value changes
+            UserDefaults.standard.set(autoPasteEnabled, forKey: "autoPasteEnabled")
+            logDebug(.system, "🎯 [AUTO-PASTE] Saved to UserDefaults successfully")
+        }
+    }
     
     private init() {
-        logInfo(.system, "ClipboardManager initializing")
+        // Load saved setting from UserDefaults
+        autoPasteEnabled = UserDefaults.standard.bool(forKey: "autoPasteEnabled")
+        
+        // If no setting exists yet, default to true (first run)
+        if UserDefaults.standard.object(forKey: "autoPasteEnabled") == nil {
+            autoPasteEnabled = true
+            UserDefaults.standard.set(true, forKey: "autoPasteEnabled")
+        } else {
+            logInfo(.system, "🎯 [AUTO-PASTE] Loaded from UserDefaults: \(autoPasteEnabled)")
+        }
+        
+        logInfo(.system, "ClipboardManager initializing with autoPasteEnabled: \(autoPasteEnabled)")
     }
     
     // MARK: - Public Interface

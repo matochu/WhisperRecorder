@@ -6,46 +6,50 @@ struct StatusCard: View {
     let memoryUsage: UInt64
     
     var body: some View {
-        VStack(spacing: 6) {
-            // Main status line with Rec button
-            HStack {
-                // Only show recording timer when recording
-                HStack(spacing: 4) {
+        VStack(spacing: 2) {
+            // Main status line: Memory - Timer - Rec button with fixed positioning
+            GeometryReader { geometry in
+                HStack {
+                    // Memory status on the left with fixed width
+                    Text("Memory: \(formatMemorySize(memoryUsage))")
+                        .font(.system(size: 11))
+                        .foregroundColor(.secondary)
+                        .frame(width: 100, alignment: .leading) // Fixed width to prevent jumping
+                    
+                    Spacer()
+                    
+                    // Recording timer in the exact center
                     if !recordingDuration.isEmpty {
                         Text(recordingDuration)
                             .font(.system(size: 13, weight: .medium))
                             .foregroundColor(.red)
+                            .frame(width: 50, alignment: .center) // Fixed width for consistent centering
                     }
-                }
-                
-                Spacer()
-                
-                // Recording button moved to right (styled like Process Again)
-                Button(action: {
-                    audioRecorder.toggleRecording()
-                }) {
-                    HStack(spacing: 4) {
-                        Image(systemName: recButtonSystemIcon)
-                            .font(.system(size: 10))
-                        Text(recButtonText)
-                            .font(.system(size: 11))
+                    
+                    Spacer()
+                    
+                    // Recording button on the right with fixed width
+                    Button(action: {
+                        audioRecorder.toggleRecording()
+                    }) {
+                        HStack(spacing: 4) {
+                            Image(systemName: recButtonSystemIcon)
+                                .font(.system(size: 10))
+                            Text(recButtonText)
+                                .font(.system(size: 11))
+                        }
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 4)
+                        .background(recButtonBackgroundColor)
+                        .foregroundColor(recButtonTextColor)
+                        .cornerRadius(4)
                     }
-                    .padding(.horizontal, 8)
-                    .padding(.vertical, 4)
-                    .background(recButtonBackgroundColor)
-                    .foregroundColor(recButtonTextColor)
-                    .cornerRadius(4)
+                    .buttonStyle(PlainButtonStyle())
+                    .frame(height: 24) // Fixed height like Process Again
+                    .frame(width: 120, alignment: .trailing) // Fixed width for button area
                 }
-                .buttonStyle(PlainButtonStyle())
-                .frame(height: 24) // Fixed height like Process Again
             }
-            
-            // Secondary info lines  
-            statusLine(
-                left: "Memory: \(formatMemorySize(memoryUsage))",
-                right: memoryDelta,
-                isPrimary: false
-            )
+            .frame(height: 14) // Fixed height for the entire status line
         }
         .cardStyle(borderColor: Color(.separatorColor), backgroundColor: statusBackgroundColor)
     }

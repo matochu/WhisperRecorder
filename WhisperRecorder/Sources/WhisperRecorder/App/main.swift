@@ -16,6 +16,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     let audioRecorder = AudioRecorder.shared
     var popover: NSPopover?
     var toastWindow: ToastWindow?
+    var eventMonitor: Any?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         #if DEBUG
@@ -59,7 +60,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             DispatchQueue.main.async {
                 if let popover = self.popover, popover.isShown {
                     popover.contentViewController = NSHostingController(
-                        rootView: NewPopoverView(audioRecorder: self.audioRecorder))
+                        rootView: PopoverView(audioRecorder: self.audioRecorder))
                 }
             }
         }
@@ -150,6 +151,12 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationWillTerminate(_ notification: Notification) {
         logWarning(.system, "Application will terminate - performing emergency audio restore")
         SystemAudioManager.shared.emergencyRestore()
+        
+        // Clean up event monitor
+        if let monitor = eventMonitor {
+            NSEvent.removeMonitor(monitor)
+            eventMonitor = nil
+        }
     }
 
     private func setupMenuBar() {
@@ -171,10 +178,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         logDebug(.ui, "Creating popover")
         popover = NSPopover()
         popover?.contentSize = NSSize(width: 340, height: 400)  // Updated size for card design
-        popover?.behavior = .transient
+        popover?.behavior = .applicationDefined  // Application controls when popover closes
         popover?.contentViewController = NSHostingController(
-            rootView: NewPopoverView(audioRecorder: audioRecorder))  // Use new card-based view
-        logDebug(.ui, "Menu bar setup complete")
+            rootView: PopoverView(audioRecorder: audioRecorder))  // Use new card-based view
     }
 
     private func setupToastWindow() {
@@ -215,14 +221,34 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     @objc func togglePopover(_ sender: AnyObject) {
-        logDebug(.ui, "Toggle popover called")
-        if let button = statusItem?.button {
+        if statusItem?.button != nil {
             if popover?.isShown == true {
-                popover?.performClose(sender)
+                closePopover()
             } else {
-                popover?.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
-                popover?.contentViewController?.view.window?.makeKey()
+                showPopover()
             }
+        }
+    }
+    
+    private func showPopover() {
+        guard let button = statusItem?.button else { return }
+        
+        popover?.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
+        popover?.contentViewController?.view.window?.makeKey()
+        
+        // Start monitoring for clicks outside the popover
+        eventMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown]) { [weak self] _ in
+            self?.closePopover()
+        }
+    }
+    
+    private func closePopover() {
+        popover?.performClose(nil)
+        
+        // Stop monitoring for clicks
+        if let monitor = eventMonitor {
+            NSEvent.removeMonitor(monitor)
+            eventMonitor = nil
         }
     }
 
@@ -266,7 +292,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             // If popover is open, update it
             if let popover = self.popover, popover.isShown {
                 popover.contentViewController = NSHostingController(
-                    rootView: NewPopoverView(audioRecorder: self.audioRecorder))  // Use new card-based view
+                    rootView: PopoverView(audioRecorder: self.audioRecorder))  // Use new card-based view
             }
         }
     }

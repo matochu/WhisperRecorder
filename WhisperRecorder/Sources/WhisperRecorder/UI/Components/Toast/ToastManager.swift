@@ -7,6 +7,7 @@ class ToastManager: ObservableObject {
     @Published var message = ""
     @Published var preview = ""
     @Published var position = NSPoint.zero
+    @Published var isContextual = false  // For styling contextual toasts differently
     
     static let shared = ToastManager()
     private var globalKeyMonitor: Any?
@@ -38,7 +39,7 @@ class ToastManager: ObservableObject {
         hideToast()
     }
     
-    func showToast(message: String, preview: String = "", at position: NSPoint? = nil) {
+    func showToast(message: String, preview: String = "", at position: NSPoint? = nil, isContextual: Bool = false) {
         // Check if toasts are enabled for visual display
         guard toastsEnabled else {
             return
@@ -52,6 +53,7 @@ class ToastManager: ObservableObject {
             self.message = ""  // Clear message - we don't want it
             self.preview = preview.trimmingCharacters(in: .whitespacesAndNewlines) // Show full text, just trim whitespace
             self.position = toastPosition
+            self.isContextual = isContextual  // Set contextual flag
             
             self.isShowing = true
             
@@ -69,10 +71,15 @@ class ToastManager: ObservableObject {
             NSEvent.removeMonitor(localKeyMonitor)
         }
         
-        // Monitor for any key press to hide toast - use both local and global
+        // Monitor for any key press to hide toast
+        // But don't hide contextual toasts on clicks - they stay until recording ends
         globalKeyMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.keyDown, .leftMouseDown, .rightMouseDown]) { [weak self] event in
             guard let self = self else { return }
             if self.isAutoPasteInProgress {
+                return
+            }
+            // Don't hide contextual toasts on mouse clicks
+            if self.isContextual && (event.type == .leftMouseDown || event.type == .rightMouseDown) {
                 return
             }
             self.hideToast()
@@ -84,6 +91,10 @@ class ToastManager: ObservableObject {
             if self.isAutoPasteInProgress {
                 return event
             }
+            // Don't hide contextual toasts on mouse clicks
+            if self.isContextual && (event.type == .leftMouseDown || event.type == .rightMouseDown) {
+                return event
+            }
             self.hideToast()
             return event  // Return the event to allow normal processing
         }
@@ -92,6 +103,7 @@ class ToastManager: ObservableObject {
     func hideToast() {
         DispatchQueue.main.async {
             self.isShowing = false
+            self.isContextual = false  // Reset contextual state when hiding
             
             // Remove key monitor
             if let globalKeyMonitor = self.globalKeyMonitor {
