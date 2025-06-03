@@ -20,7 +20,14 @@ struct ConfigurationCard: View {
     // Check if recording or processing is active (block all configuration during these operations)
     private var isActiveOperation: Bool {
         let status = audioRecorder.statusDescription
-        return status == "Recording..." || status == "Transcribing..." || status == "Processing..."
+        let isActive = status == "Recording..." || status == "Transcribing..." || status == "Processing..."
+        
+        // Debug UI state
+        if isActive {
+            logDebug(.ui, "🔒 ConfigurationCard: UI blocked, status = '\(status)'")
+        }
+        
+        return isActive
     }
     
     @ObservedObject private var toastManager = ToastManager.shared
@@ -28,6 +35,10 @@ struct ConfigurationCard: View {
     @ObservedObject private var writingStyleManager = WritingStyleManager.shared
     @ObservedObject private var llmManager = LLMManager.shared
     @ObservedObject private var clipboardManager = ClipboardManager.shared // Add ClipboardManager for auto-paste reactivity
+    
+    // Add state tracking for UI debugging
+    @State private var lastMenuInteraction = Date()
+    @State private var uiStateDebug = "normal"
     
     // Settings panel types
     enum SettingsType {
@@ -72,7 +83,15 @@ struct ConfigurationCard: View {
                             ForEach(0..<WritingStyle.styles.count, id: \.self) { index in
                                 let style = WritingStyle.styles[index]
                                 Button(style.name) {
+                                    logDebug(.ui, "🎯 Style menu: Selected '\(style.name)' (index \(index))")
+                                    lastMenuInteraction = Date()
+                                    uiStateDebug = "style_selected"
                                     selectedWritingStyleIndex = index
+                                    
+                                    // Force UI update after menu interaction
+                                    DispatchQueue.main.async {
+                                        uiStateDebug = "normal"
+                                    }
                                 }
                             }
                         } label: {
@@ -88,6 +107,11 @@ struct ConfigurationCard: View {
                         .buttonStyle(PlainButtonStyle())
                         .frame(minWidth: 120, alignment: .trailing)
                         .disabled(!WritingStyleManager.shared.hasApiKey() || isActiveOperation) // Block during active operations
+                        .onTapGesture {
+                            logDebug(.ui, "🎯 Style menu: Tapped to open")
+                            lastMenuInteraction = Date()
+                            uiStateDebug = "style_menu_opening"
+                        }
                     )
                 )
                 
@@ -101,7 +125,15 @@ struct ConfigurationCard: View {
                                 id: \.key
                             ) { code, name in
                                 Button(name) {
+                                    logDebug(.ui, "🌍 Target menu: Selected '\(name)' (code \(code))")
+                                    lastMenuInteraction = Date()
+                                    uiStateDebug = "target_selected"
                                     selectedLanguageCode = code
+                                    
+                                    // Force UI update after menu interaction
+                                    DispatchQueue.main.async {
+                                        uiStateDebug = "normal"
+                                    }
                                 }
                             }
                         } label: {
@@ -117,6 +149,11 @@ struct ConfigurationCard: View {
                         .buttonStyle(PlainButtonStyle())
                         .frame(minWidth: 120, alignment: .trailing)
                         .disabled(!WritingStyleManager.shared.hasApiKey() || isActiveOperation) // Block during active operations
+                        .onTapGesture {
+                            logDebug(.ui, "🌍 Target menu: Tapped to open")
+                            lastMenuInteraction = Date()
+                            uiStateDebug = "target_menu_opening"
+                        }
                     )
                 )
                 
@@ -371,6 +408,26 @@ struct ConfigurationCard: View {
             if isActiveOperation && settingsType != nil {
                 settingsType = nil
                 logDebug(.ui, "🔒 Auto-closed settings panel during active operation: \(newStatus)")
+            }
+        }
+        .onReceive(Timer.publish(every: 2.0, on: .main, in: .common).autoconnect()) { _ in
+            // Monitor UI state for debugging
+            let timeSinceLastInteraction = Date().timeIntervalSince(lastMenuInteraction)
+            
+            if uiStateDebug != "normal" && timeSinceLastInteraction > 5.0 {
+                logWarning(.ui, "🚨 UI potentially stuck: state='\(uiStateDebug)', \(timeSinceLastInteraction)s since last interaction")
+                // Force reset
+                DispatchQueue.main.async {
+                    uiStateDebug = "force_reset"
+                    // Try to force SwiftUI re-evaluation
+                    settingsType = nil
+                }
+            }
+            
+            // Log current UI state every 10 seconds if not normal
+            if Int(timeSinceLastInteraction) % 10 == 0 && uiStateDebug != "normal" {
+                let settingsDescription = settingsType == .models ? "models" : settingsType == .api ? "api" : "none"
+                logDebug(.ui, "📊 UI state check: '\(uiStateDebug)', isActive=\(isActiveOperation), settings=\(settingsDescription)")
             }
         }
     }
