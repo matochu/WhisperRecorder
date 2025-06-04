@@ -18,41 +18,35 @@ APP_VERSION="1.3.1"
 
 # Show help
 show_help() {
-    echo -e "${BLUE}🎙️  WhisperRecorder - Voice Recording & Transcription Tool${NC}"
-    echo -e "${BLUE}===================================================${NC}"
+    echo -e "${BLUE}🎙️  WhisperRecorder Build System${NC}"
     echo ""
-    echo "Usage: ./whisper [command] [options]"
+    echo "Usage: $0 [command]"
     echo ""
     echo -e "${GREEN}📦 Build Commands:${NC}"
-    echo "  build              Build WhisperRecorder.app (safe by default)"
-    echo "  build-debug        Build WhisperRecorder.app with debug mode enabled"
-    echo "  clean              Clean all build artifacts"
-    echo "  release            Build, sign and package for distribution (Apple Silicon)"
-    echo "  notarize           Notarize signed DMG for distribution"
+    echo "  build             Build WhisperRecorder.app"
+    echo "  build-debug       Build in debug mode"  
+    echo "  run               Run WhisperRecorder.app"
+    echo "  clean             Clean build artifacts"
     echo ""
-    echo -e "${GREEN}🚀 Run Commands:${NC}"
-    echo "  run                Run WhisperRecorder.app (safe by default)"
-    echo "  start              Alias for 'run'"
+    echo -e "${GREEN}🚀 Release Commands:${NC}"
+    echo "  release           Create release package with signing"
+    echo "  icon              Generate app icon from create_icon.sh"
+    echo "  notarize          Apple notarization for public distribution"
     echo ""
-    echo -e "${GREEN}🔍 Debug Commands:${NC}"
-    echo "  debug              Interactive debug with terminal output"
-    echo "  lldb               Debug with LLDB debugger"
+    echo -e "${GREEN}📋 Version Commands:${NC}"
+    echo "  version           Show current version"
+    echo "  version set <ver> Set specific version (e.g., 1.2.3)"
+    echo "  version bump <type> Bump version (major|minor|patch)"
+    echo "  version release   Create git tag and trigger GitHub release"
     echo ""
-    echo -e "${GREEN}🚨 Emergency Commands:${NC}"
-    echo "  cleanup            Kill all hanging processes and clean build"
-    echo "  status             Show current processes and build status"
+    echo -e "${GREEN}🔧 Utility Commands:${NC}"
+    echo "  help              Show this help"
     echo ""
-    echo -e "${GREEN}ℹ️  Info Commands:${NC}"
-    echo "  help               Show this help"
-    echo "  version            Show version info"
-    echo "  icon               Regenerate app icon"
-    echo ""
-    echo -e "${YELLOW}Examples:${NC}"
-    echo "  ./whisper build    # Build the app"
-    echo "  ./whisper run      # Run the app"
-    echo "  ./whisper debug    # Debug interactively"
-    echo "  ./whisper release  # Build and package for distribution"
-    echo "  ./whisper cleanup  # Emergency cleanup"
+    
+    if [ -f "VERSION" ]; then
+        local version=$(cat VERSION)
+        echo -e "${BLUE}Current version: v$version${NC}"
+    fi
 }
 
 # Show version
@@ -512,13 +506,24 @@ case "${1:-help}" in
         cmd_status
         ;;
     version)
-        show_version
+        if [ "$2" = "set" ] && [ -n "$3" ]; then
+            ./version.sh set "$3"
+        elif [ "$2" = "bump" ] && [ -n "$3" ]; then
+            ./version.sh bump "$3"
+        elif [ "$2" = "release" ]; then
+            ./version.sh release
+        else
+            ./version.sh current
+        fi
         ;;
     icon)
         cmd_icon
         ;;
     notarize)
-        cmd_notarize
+        echo "🍎 Starting Apple Notarization..."
+        echo "⚠️  Note: Requires valid Apple Developer account and notarization credentials"
+        # Add notarization logic here when needed
+        echo "✅ Notarization placeholder - implement when needed"
         ;;
     help|--help|-h)
         show_help

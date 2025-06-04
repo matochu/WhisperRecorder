@@ -1,0 +1,260 @@
+name: WhisperRecorder Release
+
+on:
+  push:
+    tags:
+      - "v*" # Triggers on version tags like v1.0.0
+  workflow_dispatch: # Allow manual triggers
+    inputs:
+      bump_type:
+        description: "Version bump type"
+        required: true
+        type: choice
+        options:
+          - patch
+          - minor
+          - major
+        default: "patch"
+      prerelease:
+        description: "Create pre-release (for feature branches)"
+        required: false
+        type: boolean
+        default: false
+
+env:
+  APP_NAME: WhisperRecorder
+
+jobs:
+  release:
+    runs-on: macos-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # Fetch full history for changelog
+
+      - name: Setup Xcode
+        uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: "latest-stable"
+
+      - name: Calculate version
+        id: version
+        run: |
+          cd WhisperRecorder
+          
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            # Get current version from VERSION file
+            if [ -f "VERSION" ]; then
+              CURRENT_VERSION=$(cat VERSION)
+            else
+              CURRENT_VERSION="1.0.0"
+            fi
+            
+            echo "Current version: $CURRENT_VERSION"
+            
+            # Parse version
+            IFS='.' read -r major minor patch <<< "$CURRENT_VERSION"
+            
+            # Bump version based on input
+            case "${{ github.event.inputs.bump_type }}" in
+              major)
+                major=$((major + 1))
+                minor=0
+                patch=0
+                ;;
+              minor)
+                minor=$((minor + 1))
+                patch=0
+                ;;
+              patch)
+                patch=$((patch + 1))
+                ;;
+            esac
+            
+            NEW_VERSION="$major.$minor.$patch"
+            
+            # Add branch suffix for feature branches
+            BRANCH_NAME="${{ github.ref_name }}"
+            if [ "$BRANCH_NAME" != "main" ] && [ "$BRANCH_NAME" != "master" ]; then
+              # Clean branch name for version suffix
+              CLEAN_BRANCH=$(echo "$BRANCH_NAME" | sed 's/[^a-zA-Z0-9-]/-/g' | sed 's/--*/-/g')
+              NEW_VERSION="$NEW_VERSION-$CLEAN_BRANCH"
+              IS_PRERELEASE=true
+            elif [ "${{ github.event.inputs.prerelease }}" = "true" ]; then
+              NEW_VERSION="$NEW_VERSION-pre"
+              IS_PRERELEASE=true
+            else
+              IS_PRERELEASE=false
+            fi
+            
+            # Update VERSION file
+            echo "$major.$minor.$patch" > VERSION
+            
+            echo "New version: $NEW_VERSION"
+            echo "VERSION=$NEW_VERSION" >> $GITHUB_OUTPUT
+            echo "TAG=v$NEW_VERSION" >> $GITHUB_OUTPUT
+            echo "IS_PRERELEASE=$IS_PRERELEASE" >> $GITHUB_OUTPUT
+            echo "BASE_VERSION=$major.$minor.$patch" >> $GITHUB_OUTPUT
+          else
+            # Tag-triggered build
+            VERSION=${GITHUB_REF#refs/tags/v}
+            echo "VERSION=$VERSION" >> $GITHUB_OUTPUT
+            echo "TAG=v$VERSION" >> $GITHUB_OUTPUT
+            echo "IS_PRERELEASE=false" >> $GITHUB_OUTPUT
+            echo "BASE_VERSION=$VERSION" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Build WhisperRecorder
+        run: |
+          cd WhisperRecorder
+          VERSION="${{ steps.version.outputs.BASE_VERSION }}"
+          
+          # Update version in VERSION file
+          echo "$VERSION" > VERSION
+          
+          # Create app icon
+          if [ -f "create_icon.sh" ]; then
+            ./create_icon.sh
+          fi
+
+          # Build the app
+          ./whisper build
+
+          # Verify build succeeded
+          if [ ! -d "WhisperRecorder.app" ]; then
+            echo "❌ Build failed - app not created"
+            exit 1
+          fi
+
+      - name: Create release package
+        run: |
+          cd WhisperRecorder
+          VERSION="${{ steps.version.outputs.VERSION }}"
+
+          # Create release ZIP using whisper script
+          ./whisper release
+
+          # Rename to include version
+          if [ -f "WhisperRecorder.zip" ]; then
+            mv WhisperRecorder.zip "WhisperRecorder-v$VERSION-macOS-arm64.zip"
+          fi
+
+      - name: Generate release notes from CHANGELOG
+        run: |
+          cd WhisperRecorder
+          VERSION="${{ steps.version.outputs.VERSION }}"
+          BASE_VERSION="${{ steps.version.outputs.BASE_VERSION }}"
+          
+          # Start release notes
+          echo "# WhisperRecorder v$VERSION" > release_notes.md
+          echo "" >> release_notes.md
+          
+          # Extract changes from CHANGELOG.md if it exists
+          if [ -f "../CHANGELOG.md" ]; then
+            echo "## What's New" >> release_notes.md
+            echo "" >> release_notes.md
+            
+            # Try to extract unreleased section or specific version
+            if grep -q "## \[Unreleased\]" "../CHANGELOG.md"; then
+              echo "### Changes in this release:" >> release_notes.md
+              # Extract content between [Unreleased] and next version section
+              sed -n '/## \[Unreleased\]/,/## \[/p' "../CHANGELOG.md" | sed '$d' | tail -n +2 >> release_notes.md
+            else
+              echo "### Recent changes:" >> release_notes.md
+              # Fallback to git commits since last tag
+              LAST_TAG=$(git describe --tags --abbrev=0 HEAD^ 2>/dev/null || echo "")
+              if [ -n "$LAST_TAG" ]; then
+                git log --pretty=format:"- %s" $LAST_TAG..HEAD >> release_notes.md
+              else
+                echo "- Initial release" >> release_notes.md
+              fi
+            fi
+          else
+            # Fallback to git commits
+            echo "## Changes" >> release_notes.md
+            echo "" >> release_notes.md
+            LAST_TAG=$(git describe --tags --abbrev=0 HEAD^ 2>/dev/null || echo "")
+            if [ -n "$LAST_TAG" ]; then
+              echo "### Changes since $LAST_TAG:" >> release_notes.md
+              git log --pretty=format:"- %s" $LAST_TAG..HEAD >> release_notes.md
+            else
+              echo "- Initial release" >> release_notes.md
+            fi
+          fi
+
+          echo "" >> release_notes.md
+          echo "## Installation" >> release_notes.md
+          echo "" >> release_notes.md
+          echo "1. Download \`WhisperRecorder-v$VERSION-macOS-arm64.zip\`" >> release_notes.md
+          echo "2. Unzip and move \`WhisperRecorder.app\` to Applications folder" >> release_notes.md
+          echo "3. Right-click app → Open (first time only to bypass Gatekeeper)" >> release_notes.md
+          echo "" >> release_notes.md
+          echo "## Requirements" >> release_notes.md
+          echo "" >> release_notes.md
+          echo "- macOS 12.0+ (Monterey or later)" >> release_notes.md
+          echo "- Apple Silicon (M1/M2/M3) Mac" >> release_notes.md
+          echo "- Microphone access permission" >> release_notes.md
+          echo "" >> release_notes.md
+          echo "## Features" >> release_notes.md
+          echo "" >> release_notes.md
+          echo "- 🎙️ Real-time voice recording and transcription" >> release_notes.md
+          echo "- 🤖 AI-powered text enhancement with multiple providers" >> release_notes.md
+          echo "- 📋 Auto-paste to active applications" >> release_notes.md
+          echo "- 💬 Smart toast notifications" >> release_notes.md
+          echo "- ⚡ Offline Whisper AI models" >> release_notes.md
+          echo "- 🌍 Multiple target languages" >> release_notes.md
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: ${{ steps.version.outputs.TAG }}
+          name: WhisperRecorder ${{ steps.version.outputs.VERSION }}
+          body_path: WhisperRecorder/release_notes.md
+          files: |
+            WhisperRecorder/WhisperRecorder-v${{ steps.version.outputs.VERSION }}-macOS-arm64.zip
+          draft: false
+          prerelease: ${{ steps.version.outputs.IS_PRERELEASE }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Update CHANGELOG.md for main branch releases
+        if: github.ref_name == 'main' || github.ref_name == 'master'
+        run: |
+          VERSION="${{ steps.version.outputs.BASE_VERSION }}"
+          DATE=$(date +%Y-%m-%d)
+          
+          if [ -f "CHANGELOG.md" ]; then
+            # Replace [Unreleased] with the new version
+            sed -i.bak "s/## \[Unreleased\]/## [$VERSION] - $DATE/" "CHANGELOG.md"
+            
+            # Add new Unreleased section at the top
+            sed -i.bak "/## \[$VERSION\]/i\\
+## [Unreleased]\\
+\\
+### Added\\
+\\
+### Fixed\\
+\\
+### Changed\\
+\\
+" "CHANGELOG.md"
+            
+            rm "CHANGELOG.md.bak"
+            
+            # Commit updated CHANGELOG
+            git config --local user.email "action@github.com"
+            git config --local user.name "GitHub Action"
+            git add CHANGELOG.md WhisperRecorder/VERSION
+            git commit -m "Update CHANGELOG.md and VERSION for release v$VERSION" || true
+            git push origin HEAD || true
+          fi
+
+      - name: Update latest release info
+        run: |
+          echo "✅ Released WhisperRecorder v${{ steps.version.outputs.VERSION }}"
+          echo "📦 Download: https://github.com/${{ github.repository }}/releases/latest"
+          echo "🔧 Version bump: ${{ github.event.inputs.bump_type || 'tag-triggered' }}"
+          echo "🌿 Branch: ${{ github.ref_name }}"
+          echo "📋 Pre-release: ${{ steps.version.outputs.IS_PRERELEASE }}"

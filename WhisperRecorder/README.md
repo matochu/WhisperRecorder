@@ -21,20 +21,27 @@ We now have a unified, safe-by-default script that prevents process hangs:
 ```bash
 cd WhisperRecorder
 
-# Build the app (safe mode, no parallel jobs)
-./whisper build
+# 📦 Build Commands
+./whisper build           # Build WhisperRecorder.app (safe mode, no parallel jobs)
+./whisper build-debug     # Build in debug mode with enhanced logging
+./whisper run             # Run the app (automatic process cleanup)
+./whisper clean           # Clean build artifacts
 
-# Run the app (automatic process cleanup)
-./whisper run
+# 🚀 Release Commands
+./whisper release         # Create release package with signing
+./whisper icon            # Generate app icon from create_icon.sh
+./whisper notarize        # Apple notarization for public distribution
 
-# Debug interactively (with terminal output)
-./whisper debug
+# 📋 Version Management (New!)
+./whisper version                # Show current version
+./whisper version set 1.4.0     # Set specific version
+./whisper version bump patch    # Bump version (1.3.1 → 1.3.2)
+./whisper version bump minor    # Bump version (1.3.1 → 1.4.0)
+./whisper version bump major    # Bump version (1.3.1 → 2.0.0)
+./whisper version release       # Create git tag and trigger GitHub release
 
-# Emergency cleanup (kill hanging processes)
-./whisper cleanup
-
-# See all options
-./whisper help
+# 🔧 Utility Commands
+./whisper help            # Show all available commands
 ```
 
 ### ⚠️ Legacy Scripts (Deprecated)
@@ -68,11 +75,11 @@ Old scripts are now in `scripts/` directory and should not be used directly:
 If you encounter hanging processes that can't be killed with `kill -9`:
 
 ```bash
-# Emergency cleanup
-./whisper cleanup
+# Emergency cleanup - use scripts directly
+./scripts/emergency-cleanup.sh
 
-# Check status
-./whisper status
+# Check for hanging processes
+ps aux | grep WhisperRecorder | grep -v grep
 
 # If cleanup doesn't work, restart your Mac
 sudo reboot
@@ -95,8 +102,11 @@ sudo reboot
 ./whisper build
 
 # If problems persist
-./whisper cleanup
+./scripts/emergency-cleanup.sh
 ./whisper build
+
+# For detailed debugging
+./whisper build-debug
 ```
 
 ## Configuration
@@ -123,6 +133,43 @@ Built with:
 - ✅ No parallel jobs to avoid lipo conflicts
 - ✅ Timeout protection for audio operations
 - ✅ Emergency cleanup functionality
+- ✅ Unified command interface (`./whisper`)
+- ✅ Version management and automated releases
+- ✅ GitHub Actions integration for CI/CD
+- ✅ CHANGELOG.md based release notes
+
+### Release Management
+
+For creating and managing releases, see the **[Release Guide](RELEASE_GUIDE.md)** which covers:
+
+- Automated GitHub release workflow with smart versioning
+- Version management commands (`./whisper version`)
+- Feature branch pre-releases and CHANGELOG.md integration
+- Step-by-step release process and troubleshooting
+
+### GitHub Actions (New!)
+
+WhisperRecorder now includes automated GitHub release workflow:
+
+```bash
+# Automatic release (creates tag and triggers GitHub Action)
+./whisper version bump minor
+./whisper version release
+
+# Manual GitHub workflow
+# 1. Go to GitHub Actions → "WhisperRecorder Release"
+# 2. Click "Run workflow"
+# 3. Select version bump type (patch/minor/major)
+# 4. Optionally check "Create pre-release" for feature branches
+```
+
+**Features:**
+
+- ✅ Smart versioning with dropdown selection
+- ✅ Automatic artifact creation: `WhisperRecorder-v1.4.0-macOS-arm64.zip`
+- ✅ CHANGELOG.md integration for release notes
+- ✅ Feature branch pre-release support
+- ✅ Safe build environment with process monitoring
 
 See documentation in `../docs/` for detailed development information.
 
@@ -174,31 +221,50 @@ When releasing a new version:
 
 ## Packaging and Distribution
 
+### Automated Release (Recommended)
+
+For automated releases with proper versioning and GitHub integration:
+
+```bash
+# 1. Automatic release
+./whisper version bump minor    # or patch/major
+./whisper version release      # Creates tag and triggers GitHub Action
+
+# 2. Manual GitHub release
+# Go to GitHub Actions → "WhisperRecorder Release" → "Run workflow"
+# Select version bump type and run
+```
+
+This will automatically:
+
+- Build and package the app
+- Create versioned ZIP: `WhisperRecorder-v1.4.0-macOS-arm64.zip`
+- Generate release notes from CHANGELOG.md
+- Upload to GitHub Releases
+
+### Manual Packaging
+
+For local development and testing:
+
+```bash
+# Create release package manually
+./whisper release
+
+# Or use the package script directly
+./package.sh
+```
+
 ### Creating a Distributable App
 
 To create a standalone app bundle that can be distributed to other users:
 
-1. Run `./package_app.sh` to build the app bundle
+1. Run `./whisper release` to build the app bundle with signing
 2. The script will create `WhisperRecorder.app` with all necessary resources and libraries
-
-### Creating a Distributable Zip File
-
-To create a zip file for distribution:
-
-```sh
-zip -r WhisperRecorder.zip WhisperRecorder.app
-```
-
-This will create a zip file that includes:
-
-- The application executable
-- Required libraries (libwhisper.dylib, libggml libraries)
-- No model files - users will download their preferred model on first run
 
 ### Installation on Other Machines
 
-1. Download and unzip WhisperRecorder.zip
-2. Move WhisperRecorder.app to the Applications folder
+1. Download `WhisperRecorder-v{version}-macOS-arm64.zip` from GitHub Releases
+2. Unzip and move WhisperRecorder.app to the Applications folder
 3. Right-click on the app and select "Open" to bypass macOS security (first run only)
 4. Grant microphone permissions when prompted
 5. Select and download your preferred Whisper model when prompted

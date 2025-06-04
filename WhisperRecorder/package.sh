@@ -65,7 +65,15 @@ echo "5. Copying fresh binary..."
 cp ".build/arm64-apple-macosx/$BUILD_CONFIG/WhisperRecorder" .
 
 APP_NAME="WhisperRecorder"
-APP_VERSION="1.3.1"
+
+# Get version from VERSION file
+if [ -f "VERSION" ]; then
+    APP_VERSION=$(cat VERSION)
+else
+    APP_VERSION="1.0.0"
+fi
+
+echo "📦 Packaging WhisperRecorder v$APP_VERSION for Apple Silicon (arm64)..."
 
 # Create app bundle structure
 APP_BUNDLE="$APP_NAME.app"
@@ -143,7 +151,7 @@ echo "📝 Note: WhisperRecorder will download models on demand."
 echo "   The app will prompt the user to select and download models when needed."
 
 # Create Info.plist
-echo "12. Creating Info.plist..."
+echo "11. Creating Info.plist with version $APP_VERSION..."
 cat > "$CONTENTS/Info.plist" << EOF
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -164,15 +172,15 @@ cat > "$CONTENTS/Info.plist" << EOF
     <key>CFBundleShortVersionString</key>
     <string>$APP_VERSION</string>
     <key>CFBundleVersion</key>
-    <string>1</string>
+    <string>$APP_VERSION</string>
     <key>LSMinimumSystemVersion</key>
     <string>12.0</string>
     <key>NSHumanReadableCopyright</key>
-    <string>Copyright © 2025. All rights reserved.</string>
+    <string>© 2025 WhisperRecorder. All rights reserved.</string>
     <key>NSMicrophoneUsageDescription</key>
-    <string>WhisperRecorder needs access to your microphone to record audio for transcription.</string>
-    <key>NSPrincipalClass</key>
-    <string>NSApplication</string>
+    <string>WhisperRecorder needs microphone access to record and transcribe audio.</string>
+    <key>NSAppleEventsUsageDescription</key>
+    <string>WhisperRecorder needs permission to send keystrokes for auto-paste functionality.</string>
     <key>LSUIElement</key>
     <true/>
     <key>LSEnvironment</key>
