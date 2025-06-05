@@ -64,7 +64,8 @@ show_version() {
 check_processes() {
     local running=$(pgrep -f "WhisperRecorder|lipo" 2>/dev/null || true)
     if [ -n "$running" ]; then
-        echo -e "${YELLOW}⚠️  Found running processes: $running${NC}"
+        local processes_formatted=$(echo "$running" | tr '\n' ' / ' | sed 's/ \/ $//')
+        echo -e "${YELLOW}⚠️  Found running processes: $processes_formatted${NC}"
         return 1
     fi
     return 0
@@ -74,7 +75,8 @@ check_processes() {
 kill_processes() {
     local running=$(pgrep -f "WhisperRecorder|lipo" 2>/dev/null || true)
     if [ -n "$running" ]; then
-        echo -e "${YELLOW}🔫 Killing processes: $running${NC}"
+        local processes_formatted=$(echo "$running" | tr '\n' ' / ' | sed 's/ \/ $//')
+        echo -e "${YELLOW}🔫 Killing processes: $processes_formatted${NC}"
         echo "$running" | xargs kill -TERM 2>/dev/null
         sleep 2
         echo "$running" | xargs kill -KILL 2>/dev/null
@@ -82,7 +84,8 @@ kill_processes() {
         
         local still_running=$(pgrep -f "WhisperRecorder|lipo" 2>/dev/null || true)
         if [ -n "$still_running" ]; then
-            echo -e "${RED}❌ Could not kill processes: $still_running${NC}"
+            local still_processes_formatted=$(echo "$still_running" | tr '\n' ' / ' | sed 's/ \/ $//')
+            echo -e "${RED}❌ Could not kill processes: $still_processes_formatted${NC}"
             echo "You may need to restart your Mac"
             return 1
         fi
@@ -252,7 +255,8 @@ cmd_cleanup() {
     # Kill all lipo processes
     local lipo_pids=$(pgrep lipo 2>/dev/null || true)
     if [ -n "$lipo_pids" ]; then
-        echo "🔫 Killing lipo processes: $lipo_pids"
+        local lipo_processes_formatted=$(echo "$lipo_pids" | tr '\n' ' / ' | sed 's/ \/ $//')
+        echo "🔫 Killing lipo processes: $lipo_processes_formatted"
         echo "$lipo_pids" | xargs kill -TERM 2>/dev/null
         sleep 2
         echo "$lipo_pids" | xargs kill -KILL 2>/dev/null
@@ -272,7 +276,8 @@ cmd_cleanup() {
     
     local remaining=$(pgrep -f "WhisperRecorder|lipo" 2>/dev/null || true)
     if [ -n "$remaining" ]; then
-        echo -e "${RED}⚠️  Some processes still running: $remaining${NC}"
+        local remaining_processes_formatted=$(echo "$remaining" | tr '\n' ' / ' | sed 's/ \/ $//')
+        echo -e "${RED}⚠️  Some processes still running: $remaining_processes_formatted${NC}"
         echo "You may need to restart your Mac"
     else
         echo -e "${GREEN}✅ Cleanup completed successfully${NC}"
@@ -294,7 +299,8 @@ cmd_status() {
     # Check processes
     local running=$(pgrep -f WhisperRecorder 2>/dev/null || true)
     if [ -n "$running" ]; then
-        echo -e "${YELLOW}⚠️  Running processes: $running${NC}"
+        local running_processes_formatted=$(echo "$running" | tr '\n' ' / ' | sed 's/ \/ $//')
+        echo -e "${YELLOW}⚠️  Running processes: $running_processes_formatted${NC}"
     else
         echo -e "${GREEN}✅ No running processes${NC}"
     fi

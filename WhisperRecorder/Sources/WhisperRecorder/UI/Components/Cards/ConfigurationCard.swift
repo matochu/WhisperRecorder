@@ -17,17 +17,35 @@ struct ConfigurationCard: View {
     @State private var cachedCurrentLLMModels: [String] = []
     @State private var lastCacheUpdate = Date()
     
+    // Add state tracking for operation status to avoid frequent logging
+    @State private var lastOperationStatus = ""
+    @State private var lastOperationStatusChange = Date()
+    
     // Check if recording or processing is active (block all configuration during these operations)
     private var isActiveOperation: Bool {
         let status = audioRecorder.statusDescription
-        let isActive = status == "Recording..." || status == "Transcribing..." || status == "Processing..."
+        return status == "Recording..." || status == "Processing..."
+    }
+    
+    // Function to handle status logging (called from onChange)
+    private func handleStatusChange() {
+        let status = audioRecorder.statusDescription
+        let isActive = isActiveOperation
         
-        // Debug UI state
-        if isActive {
-            logDebug(.ui, "🔒 ConfigurationCard: UI blocked, status = '\(status)'")
+        // Only log on actual status changes
+        if status != lastOperationStatus {
+            let now = Date()
+            // Throttle logging to at most once per second to avoid spam
+            if now.timeIntervalSince(lastOperationStatusChange) >= 1.0 {
+                if isActive {
+                    logDebug(.ui, "🔒 ConfigurationCard: UI blocked, status changed to '\(status)'")
+                } else if lastOperationStatus != "" && lastOperationStatus != status {
+                    logDebug(.ui, "🔓 ConfigurationCard: UI unblocked, status changed to '\(status)'")
+                }
+                lastOperationStatus = status
+                lastOperationStatusChange = now
+            }
         }
-        
-        return isActive
     }
     
     @ObservedObject private var toastManager = ToastManager.shared
@@ -385,6 +403,9 @@ struct ConfigurationCard: View {
             let savedLanguageCode = UserDefaults.standard.string(forKey: "selectedLanguageCode") ?? WritingStyleManager.shared.currentTargetLanguage
             selectedLanguageCode = savedLanguageCode
             WritingStyleManager.shared.setTargetLanguage(savedLanguageCode)
+        }
+        .onChange(of: audioRecorder.statusDescription) { _ in
+            handleStatusChange()
         }
         .onChange(of: WhisperWrapper.shared.currentModel.id) { _ in
             // Update when current model changes - but only if not active operation to avoid conflicts
