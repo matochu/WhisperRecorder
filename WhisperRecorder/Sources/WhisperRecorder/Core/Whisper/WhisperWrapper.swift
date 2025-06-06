@@ -355,6 +355,13 @@ class WhisperWrapper {
         // Wait briefly for the async operation to complete
         _ = semaphore.wait(timeout: .now() + 1.0)
 
+        // Check if speaker diarization is enabled
+        let speakerEngine = SpeakerDiarizationEngine.shared
+        if speakerEngine.config.enabled {
+            logInfo(.whisper, "Speaker diarization enabled, processing with speaker detection")
+            return transcribeWithSpeakerDiarization(audioFile: audioFile)
+        }
+
         // Use the original file directly without conversion
         logInfo(.whisper, "Transcribing file directly: \(audioFile.path)")
         logInfo(.whisper, "Using language detection: \(useLanguageDetection)")
@@ -538,5 +545,284 @@ class WhisperWrapper {
     /// Get list of downloaded models
     func getDownloadedModels() -> [WhisperModel] {
         return WhisperWrapper.availableModels.filter { isModelDownloaded($0) }
+    }
+    
+    // MARK: - Speaker Diarization Integration
+    
+    private func transcribeWithSpeakerDiarization(audioFile: URL) -> String {
+        logInfo(.whisper, "Starting transcription with speaker diarization")
+        
+        let speakerEngine = SpeakerDiarizationEngine.shared
+        let semaphore = DispatchSemaphore(value: 0)
+        var finalResult = ""
+        
+        // Process speaker diarization
+        speakerEngine.processSpeakerDiarization(audioURL: audioFile) { result in
+            switch result {
+            case .success(let timeline):
+                            if timeline.segments.isEmpty {
+                // No speakers detected, fallback to regular transcription
+                logInfo(.whisper, "No speakers detected, using regular transcription")
+                finalResult = self.transcribeRegular(audioFile: audioFile)
+                // Save both human and LLM formats
+                self.saveTranscriptionFormats(finalResult, timeline: nil)
+            } else {
+                // Generate speaker-labeled transcription
+                finalResult = self.generateSpeakerLabeledTranscription(audioFile: audioFile, timeline: timeline)
+                // Save both human and LLM formats
+                self.saveTranscriptionFormats(finalResult, timeline: timeline)
+            }
+                
+            case .failure(let error):
+                logError(.whisper, "Speaker diarization failed: \(error), falling back to regular transcription")
+                finalResult = self.transcribeRegular(audioFile: audioFile)
+                // Save both human and LLM formats
+                self.saveTranscriptionFormats(finalResult, timeline: nil)
+            }
+            
+            semaphore.signal()
+        }
+        
+        // Wait for speaker diarization to complete
+        _ = semaphore.wait(timeout: .now() + 60.0) // 60 second timeout
+        
+        return finalResult
+    }
+    
+    private func transcribeRegular(audioFile: URL) -> String {
+        logInfo(.whisper, "Using regular transcription (no speaker detection)")
+        
+        let result = whisper_wrapper_transcribe_with_lang(
+            wrapper, audioFile.path, useLanguageDetection)
+
+        if let result = result, let transcription = String(cString: result, encoding: .utf8) {
+            let trimmed = transcription.trimmingCharacters(in: CharacterSet.whitespacesAndNewlines)
+            return trimmed.isEmpty ? "No speech detected. Please try again." : trimmed
+        } else {
+            return "Error: Failed to transcribe audio"
+        }
+    }
+    
+    private func generateSpeakerLabeledTranscription(audioFile: URL, timeline: SpeakerTimeline) -> String {
+        logInfo(.whisper, "Generating speaker-labeled transcription for \(timeline.speakerCount) speakers")
+        
+        // Try segment-by-segment transcription for better accuracy
+        let segmentTranscriptions = transcribeBySegments(audioFile: audioFile, timeline: timeline)
+        
+        if !segmentTranscriptions.isEmpty {
+            return formatSegmentTranscriptions(segmentTranscriptions: segmentTranscriptions, timeline: timeline)
+        } else {
+            // Fallback to regular transcription with speaker info
+            logInfo(.whisper, "Segment transcription failed, using fallback approach")
+            return generateFallbackTranscription(audioFile: audioFile, timeline: timeline)
+        }
+    }
+    
+    private func transcribeBySegments(audioFile: URL, timeline: SpeakerTimeline) -> [String] {
+        logInfo(.whisper, "Attempting segment-by-segment transcription for \(timeline.segments.count) segments")
+        
+        var segmentTranscriptions: [String] = []
+        
+        // For now, we'll use a simplified approach since whisper.cpp doesn't have built-in segment transcription
+        // In the future, this could be improved by:
+        // 1. Extracting audio segments using FFmpeg
+        // 2. Transcribing each segment separately
+        // 3. Combining results with speaker labels
+        
+        // Current limitation: whisper.cpp transcribes the entire file
+        // We'll use timestamp-based splitting as a workaround
+        let fullTranscription = transcribeRegular(audioFile: audioFile)
+        
+        if fullTranscription.starts(with: "Error:") || fullTranscription.starts(with: "No speech") {
+            logWarning(.whisper, "Full transcription failed, cannot split by segments")
+            return []
+        }
+        
+        // Simple approach: split transcription proportionally by speaking time
+        let words = fullTranscription.components(separatedBy: .whitespacesAndNewlines).filter { !$0.isEmpty }
+        var wordIndex = 0
+        let totalSpeakingTime = timeline.segments.reduce(0) { $0 + $1.duration }
+        
+        for segment in timeline.segments {
+            let segmentRatio = segment.duration / totalSpeakingTime
+            let wordsForSegment = max(1, Int(Float(words.count) * Float(segmentRatio)))
+            
+            let segmentWords = Array(words[wordIndex..<min(wordIndex + wordsForSegment, words.count)])
+            let segmentText = segmentWords.joined(separator: " ")
+            
+            segmentTranscriptions.append(segmentText)
+            wordIndex += wordsForSegment
+            
+            if wordIndex >= words.count {
+                break
+            }
+        }
+        
+        // Add any remaining words to the last segment
+        if wordIndex < words.count {
+            let remainingWords = Array(words[wordIndex...])
+            if !segmentTranscriptions.isEmpty {
+                segmentTranscriptions[segmentTranscriptions.count - 1] += " " + remainingWords.joined(separator: " ")
+            }
+        }
+        
+        logInfo(.whisper, "Generated \(segmentTranscriptions.count) segment transcriptions")
+        return segmentTranscriptions
+    }
+    
+    private func formatSegmentTranscriptions(segmentTranscriptions: [String], timeline: SpeakerTimeline) -> String {
+        var result = ""
+        
+        // Build complete output with speaker summary and segment transcriptions
+        result += buildSpeakerSummary(timeline: timeline)
+        result += "\n📝 Transcript with Speaker Labels:\n\n"
+        
+        // Add transcribed segments with speaker labels
+        for (index, segment) in timeline.segments.enumerated() {
+            let speakerIndex = timeline.uniqueSpeakers.firstIndex(of: segment.speakerID) ?? 0
+            let displayName = "Speaker \(speakerIndex + 1)"
+            let timestamp = String(format: "%.1f", segment.startTime)
+            let endTime = String(format: "%.1f", segment.endTime)
+            
+            let segmentText = index < segmentTranscriptions.count ? segmentTranscriptions[index] : "[No transcription]"
+            
+            result += "👤 \(displayName) [\(timestamp)s-\(endTime)s]: \(segmentText)\n\n"
+        }
+        
+        // Add speaker timeline
+        result += buildSpeakerTimeline(timeline: timeline)
+        
+        logInfo(.whisper, "Formatted speaker-labeled transcription with \(timeline.segments.count) segments")
+        return result
+    }
+    
+    private func generateFallbackTranscription(audioFile: URL, timeline: SpeakerTimeline) -> String {
+        let regularTranscription = transcribeRegular(audioFile: audioFile)
+        
+        if regularTranscription.starts(with: "Error:") || regularTranscription.starts(with: "No speech") {
+            return regularTranscription
+        }
+        
+        // Create speaker-labeled output with full transcription
+        var result = ""
+        
+        result += buildSpeakerSummary(timeline: timeline)
+        result += "\n📝 Full Transcript:\n\(regularTranscription)\n\n"
+        result += buildSpeakerTimeline(timeline: timeline)
+        
+        logInfo(.whisper, "Generated fallback speaker-labeled transcription")
+        return result
+    }
+    
+    // MARK: - Helper Methods for Speaker Output Formatting
+    
+    private func buildSpeakerSummary(timeline: SpeakerTimeline) -> String {
+        var summary = "🎤 Speakers Detected: \(timeline.speakerCount)\n\n"
+        
+        for (index, speakerID) in timeline.uniqueSpeakers.enumerated() {
+            let speakingTime = timeline.speakingTime(for: speakerID)
+            let segmentCount = timeline.segments(for: speakerID).count
+            let displayName = "Speaker \(index + 1)"
+            
+            summary += "👤 \(displayName): \(String(format: "%.1f", speakingTime))s (\(segmentCount) segments)\n"
+        }
+        
+        return summary
+    }
+    
+    private func buildSpeakerTimeline(timeline: SpeakerTimeline) -> String {
+        var timelineText = "🕒 Speaker Timeline:\n"
+        
+        for segment in timeline.segments {
+            let speakerIndex = timeline.uniqueSpeakers.firstIndex(of: segment.speakerID) ?? 0
+            let displayName = "Speaker \(speakerIndex + 1)"
+            let timestamp = String(format: "%.1f", segment.startTime)
+            let endTime = String(format: "%.1f", segment.endTime)
+            let duration = String(format: "%.1f", segment.duration)
+            
+            timelineText += "[\(timestamp)s-\(endTime)s] \(displayName) (\(duration)s)\n"
+        }
+        
+        return timelineText
+    }
+    
+    // MARK: - LLM-Friendly Output Formatting
+    
+    /// Generate LLM-friendly format for further processing
+    func formatForLLM(humanReadableText: String, timeline: SpeakerTimeline?) -> String {
+        var llmFormat = ""
+        
+        // Header for LLM processing
+        llmFormat += "# CONVERSATION TRANSCRIPT\n\n"
+        
+        if let timeline = timeline, !timeline.segments.isEmpty {
+            // Structured speaker format for LLM
+            llmFormat += "## SPEAKERS: \(timeline.speakerCount)\n\n"
+            
+            // Simple speaker segments for LLM processing
+            for (index, segment) in timeline.segments.enumerated() {
+                let speakerIndex = timeline.uniqueSpeakers.firstIndex(of: segment.speakerID) ?? 0
+                let speakerLabel = "SPEAKER_\(speakerIndex + 1)"
+                let timestamp = String(format: "%.1f", segment.startTime)
+                
+                // Extract segment text from human readable format
+                let segmentText = extractSegmentText(from: humanReadableText, segmentIndex: index)
+                
+                llmFormat += "[\(timestamp)s] \(speakerLabel): \(segmentText)\n"
+            }
+        } else {
+            // Single speaker or no diarization
+            llmFormat += "## SPEAKERS: 1\n\n"
+            
+            // Clean text without emojis for LLM
+            let cleanText = humanReadableText
+                .replacingOccurrences(of: "🎤 Speakers Detected: \\d+\\s*", with: "", options: .regularExpression)
+                .replacingOccurrences(of: "👤 Speaker \\d+:.*?\\n", with: "", options: .regularExpression)
+                .replacingOccurrences(of: "📝 Transcript.*?:\\s*", with: "", options: .regularExpression)
+                .replacingOccurrences(of: "🕒 Speaker Timeline:[\\s\\S]*", with: "", options: .regularExpression)
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            
+            llmFormat += "[0.0s] SPEAKER_1: \(cleanText)\n"
+        }
+        
+        llmFormat += "\n## END_TRANSCRIPT\n"
+        
+        return llmFormat
+    }
+    
+    private func extractSegmentText(from humanText: String, segmentIndex: Int) -> String {
+        // Extract text from speaker segment lines
+        let pattern = "👤 Speaker \\d+ \\[.*?\\]: (.*?)(?=\\n\\n|👤|🕒|$)"
+        
+        do {
+            let regex = try NSRegularExpression(pattern: pattern, options: [.dotMatchesLineSeparators])
+            let matches = regex.matches(in: humanText, options: [], range: NSRange(location: 0, length: humanText.count))
+            
+            if segmentIndex < matches.count {
+                let match = matches[segmentIndex]
+                if match.numberOfRanges > 1 {
+                    let range = match.range(at: 1)
+                    if let swiftRange = Range(range, in: humanText) {
+                        return String(humanText[swiftRange]).trimmingCharacters(in: .whitespacesAndNewlines)
+                    }
+                }
+            }
+        } catch {
+            logError(.whisper, "Failed to extract segment text: \(error)")
+        }
+        
+        return "[No transcription]"
+    }
+    
+    /// Save both human and LLM formats to AppDelegate
+    func saveTranscriptionFormats(_ humanText: String, timeline: SpeakerTimeline?) {
+        // Save human-readable format (existing behavior)
+        AppDelegate.lastOriginalWhisperText = humanText
+        
+        // Save LLM-friendly format for further processing
+        let llmText = formatForLLM(humanReadableText: humanText, timeline: timeline)
+        AppDelegate.lastLLMFormattedText = llmText
+        
+        logInfo(.whisper, "Saved transcription in both human and LLM formats")
     }
 }

@@ -150,8 +150,26 @@ EOF
 echo "📝 Note: WhisperRecorder will download models on demand."
 echo "   The app will prompt the user to select and download models when needed."
 
+# Copy Python scripts
+echo "12. Copying Python scripts..."
+if [ -d "scripts" ]; then
+    echo "   Copying speaker diarization Python scripts..."
+    mkdir -p "$RESOURCES/scripts"
+    cp scripts/speaker_diarization.py "$RESOURCES/scripts/" 2>/dev/null || echo "   ⚠️ speaker_diarization.py not found"
+    cp scripts/requirements*.txt "$RESOURCES/scripts/" 2>/dev/null || echo "   ⚠️ requirements files not found"
+    
+    if [ -f "$RESOURCES/scripts/speaker_diarization.py" ]; then
+        chmod +x "$RESOURCES/scripts/speaker_diarization.py"
+        echo "   ✅ Python scripts copied to bundle"
+    else
+        echo "   ⚠️ Failed to copy Python scripts"
+    fi
+else
+    echo "   ⚠️ Scripts directory not found"
+fi
+
 # Create Info.plist
-echo "11. Creating Info.plist with version $APP_VERSION..."
+echo "13. Creating Info.plist with version $APP_VERSION..."
 cat > "$CONTENTS/Info.plist" << EOF
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -195,7 +213,7 @@ cat > "$CONTENTS/Info.plist" << EOF
 EOF
 
 # Create launcher shell script
-echo "13. Creating launcher shell script..."
+echo "14. Creating launcher shell script..."
 cat > "$MACOS/$APP_NAME.sh" << EOF
 #!/bin/bash
 DIR="\$( cd "\$( dirname "\${BASH_SOURCE[0]}" )" && pwd )"
@@ -208,7 +226,7 @@ EOF
 chmod +x "$MACOS/$APP_NAME.sh"
 
 # Create C launcher
-echo "14. Creating C launcher..."
+echo "15. Creating C launcher..."
 cat > launcher.c << EOF
 #include <stdlib.h>
 #include <stdio.h>
@@ -244,11 +262,11 @@ int main(int argc, char *argv[]) {
 EOF
 
 # Compile launcher
-echo "15. Compiling launcher..."
+echo "16. Compiling launcher..."
 gcc -mmacosx-version-min=12.0 -arch arm64 -o "$MACOS/$APP_NAME" launcher.c
 
 # Fix library paths
-echo "16. Fixing library paths..."
+echo "17. Fixing library paths..."
 if [ "$DEBUG_BUILD" = "1" ]; then
     echo "   🐛 SKIPPING library path fixes for debug build (to preserve code signing)"
     echo "   📝 Debug builds will use DYLD_LIBRARY_PATH from launcher script"
@@ -257,7 +275,7 @@ else
     install_name_tool -add_rpath "@executable_path/../Frameworks" "$MACOS/$APP_NAME.bin"
 fi
 
-echo "17. Updating dylib references..."
+echo "18. Updating dylib references..."
 if [ "$DEBUG_BUILD" = "1" ]; then
     echo "   🐛 SKIPPING dylib reference updates for debug build (to preserve code signing)"
 else
@@ -272,7 +290,7 @@ else
 fi
 
 # Clean up
-echo "18. Cleaning up temporary files..."
+echo "19. Cleaning up temporary files..."
 rm -f launcher.c
 rm -f WhisperRecorder
 

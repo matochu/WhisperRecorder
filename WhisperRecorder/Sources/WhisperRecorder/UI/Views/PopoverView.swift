@@ -96,6 +96,8 @@ struct PopoverView: View {
                 inputText: $inputText
             )
             
+            HistoryCard()
+            
             SystemCard()
         }
         .onChange(of: selectedWritingStyleIndex) { newValue in

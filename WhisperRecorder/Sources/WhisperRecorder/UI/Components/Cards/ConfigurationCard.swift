@@ -53,6 +53,7 @@ struct ConfigurationCard: View {
     @ObservedObject private var writingStyleManager = WritingStyleManager.shared
     @ObservedObject private var llmManager = LLMManager.shared
     @ObservedObject private var clipboardManager = ClipboardManager.shared // Add ClipboardManager for auto-paste reactivity
+    @ObservedObject private var speakerEngine = SpeakerDiarizationEngine.shared
     
     // Add state tracking for UI debugging
     @State private var lastMenuInteraction = Date()
@@ -62,6 +63,7 @@ struct ConfigurationCard: View {
     enum SettingsType {
         case models
         case api
+        case speakers
     }
     
     // MARK: - Cache Management
@@ -370,6 +372,54 @@ struct ConfigurationCard: View {
                     )
                 )
                 
+                // Speaker Diarization - Main Toggle
+                configRow(
+                    icon: "👥",
+                    label: "Speakers",
+                    content: AnyView(
+                        HStack(spacing: 4) {
+                            Button(action: {
+                                if !isActiveOperation {
+                                    let newConfig = SpeakerDiarizationConfig(
+                                        enabled: !speakerEngine.config.enabled,
+                                        speakerCount: speakerEngine.config.speakerCount,
+                                        sensitivity: speakerEngine.config.sensitivity,
+                                        minimumSegmentDuration: speakerEngine.config.minimumSegmentDuration
+                                    )
+                                    speakerEngine.updateConfiguration(newConfig)
+                                }
+                            }) {
+                                HStack(spacing: 4) {
+                                    Text(speakerEngine.config.enabled ? "Enabled" : "Disabled")
+                                        .font(.system(size: 12))
+                                        .foregroundColor(speakerEngine.config.enabled ? .green : .orange)
+                                    
+                                    Image(systemName: speakerEngine.config.enabled ? "checkmark.circle" : "xmark.circle")
+                                        .font(.system(size: 10))
+                                        .foregroundColor(.secondary)
+                                }
+                            }
+                            .buttonStyle(PlainButtonStyle())
+                            .frame(minWidth: 120, alignment: .trailing)
+                            .disabled(isActiveOperation)
+                            .help("Enable speaker diarization to identify different speakers")
+                            
+                            Button(action: {
+                                if !isActiveOperation {
+                                    settingsType = settingsType == .speakers ? nil : .speakers
+                                }
+                            }) {
+                                Image(systemName: "gear")
+                                    .font(.system(size: 10))
+                                    .foregroundColor(isActiveOperation ? .secondary.opacity(0.5) : .secondary)
+                            }
+                            .buttonStyle(PlainButtonStyle())
+                            .disabled(isActiveOperation)
+                            .help(isActiveOperation ? "Settings blocked during recording/processing" : "Configure speaker settings")
+                        }
+                    )
+                )
+                
                 // Universal settings panel - only allow if not active operation
                 if let settingsType = settingsType, !isActiveOperation {
                     Divider()
@@ -501,6 +551,8 @@ struct ConfigurationCard: View {
                 modelSettingsView
             case .api:
                 apiSettingsView
+            case .speakers:
+                speakerSettingsView
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -587,6 +639,204 @@ struct ConfigurationCard: View {
         }
         .onChange(of: modelRefreshTrigger) { _ in
             // Trigger view refresh
+        }
+    }
+    
+    private var speakerSettingsView: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            speakerSettingsHeader
+            speakerMainToggle
+            
+            if speakerEngine.config.enabled {
+                Divider().padding(.vertical, 4)
+                speakerCountSelection
+                Divider().padding(.vertical, 4)
+                speakerSensitivitySlider
+                Divider().padding(.vertical, 4)
+                speakerDurationSlider
+            }
+        }
+    }
+    
+    private var speakerSettingsHeader: some View {
+        Text("Speaker Diarization Configuration")
+            .font(.system(size: 11, weight: .medium))
+            .foregroundColor(.secondary)
+    }
+    
+    private var speakerMainToggle: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack {
+                Text("Enable Speaker Detection")
+                    .font(.system(size: 11, weight: .medium))
+                
+                Spacer()
+                
+                Toggle("", isOn: Binding(
+                    get: { speakerEngine.config.enabled },
+                    set: { enabled in
+                        let newConfig = SpeakerDiarizationConfig(
+                            enabled: enabled,
+                            speakerCount: speakerEngine.config.speakerCount,
+                            sensitivity: speakerEngine.config.sensitivity,
+                            minimumSegmentDuration: speakerEngine.config.minimumSegmentDuration
+                        )
+                        speakerEngine.updateConfiguration(newConfig)
+                    }
+                ))
+                .toggleStyle(SwitchToggleStyle())
+                .scaleEffect(0.8)
+            }
+            
+            Text("Automatically identify and label different speakers in conversations")
+                .font(.system(size: 10))
+                .foregroundColor(.secondary)
+                .padding(.leading, 2)
+        }
+    }
+    
+    private var speakerCountSelection: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text("Expected Speaker Count")
+                .font(.system(size: 11, weight: .medium))
+            
+            HStack(spacing: 8) {
+                ForEach(SpeakerCount.allCases, id: \.self) { count in
+                    speakerCountButton(for: count)
+                }
+            }
+            
+            Text("Current: \(speakerEngine.config.speakerCount.displayName)")
+                .font(.system(size: 10))
+                .foregroundColor(.secondary)
+                .padding(.leading, 2)
+        }
+    }
+    
+    private func speakerCountButton(for count: SpeakerCount) -> some View {
+        Button(action: {
+            let newConfig = SpeakerDiarizationConfig(
+                enabled: speakerEngine.config.enabled,
+                speakerCount: count,
+                sensitivity: speakerEngine.config.sensitivity,
+                minimumSegmentDuration: speakerEngine.config.minimumSegmentDuration
+            )
+            speakerEngine.updateConfiguration(newConfig)
+        }) {
+            Text(count.displayName)
+                .font(.system(size: 10))
+                .padding(.horizontal, 8)
+                .padding(.vertical, 4)
+                .background(
+                    speakerEngine.config.speakerCount == count ? 
+                    Color.blue : Color(.controlBackgroundColor)
+                )
+                .foregroundColor(
+                    speakerEngine.config.speakerCount == count ? 
+                    .white : .primary
+                )
+                .cornerRadius(4)
+        }
+        .buttonStyle(PlainButtonStyle())
+    }
+    
+    private var speakerSensitivitySlider: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack {
+                Text("Detection Sensitivity")
+                    .font(.system(size: 11, weight: .medium))
+                
+                Spacer()
+                
+                Text(String(format: "%.1f", speakerEngine.config.sensitivity))
+                    .font(.system(size: 10))
+                    .foregroundColor(.secondary)
+            }
+            
+            Slider(
+                value: Binding(
+                    get: { speakerEngine.config.sensitivity },
+                    set: { sensitivity in
+                        let newConfig = SpeakerDiarizationConfig(
+                            enabled: speakerEngine.config.enabled,
+                            speakerCount: speakerEngine.config.speakerCount,
+                            sensitivity: sensitivity,
+                            minimumSegmentDuration: speakerEngine.config.minimumSegmentDuration
+                        )
+                        speakerEngine.updateConfiguration(newConfig)
+                    }
+                ),
+                in: 0.1...1.0,
+                step: 0.1
+            )
+            .accentColor(.blue)
+            
+            HStack {
+                Text("Low (0.1)")
+                    .font(.system(size: 9))
+                    .foregroundColor(.secondary)
+                
+                Spacer()
+                
+                Text("High (1.0)")
+                    .font(.system(size: 9))
+                    .foregroundColor(.secondary)
+            }
+            
+            Text("Higher values detect speaker changes more readily")
+                .font(.system(size: 10))
+                .foregroundColor(.secondary)
+                .padding(.leading, 2)
+        }
+    }
+    
+    private var speakerDurationSlider: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack {
+                Text("Minimum Segment Duration")
+                    .font(.system(size: 11, weight: .medium))
+                
+                Spacer()
+                
+                Text("\(String(format: "%.1f", speakerEngine.config.minimumSegmentDuration))s")
+                    .font(.system(size: 10))
+                    .foregroundColor(.secondary)
+            }
+            
+            Slider(
+                value: Binding(
+                    get: { speakerEngine.config.minimumSegmentDuration },
+                    set: { duration in
+                        let newConfig = SpeakerDiarizationConfig(
+                            enabled: speakerEngine.config.enabled,
+                            speakerCount: speakerEngine.config.speakerCount,
+                            sensitivity: speakerEngine.config.sensitivity,
+                            minimumSegmentDuration: duration
+                        )
+                        speakerEngine.updateConfiguration(newConfig)
+                    }
+                ),
+                in: 0.5...5.0,
+                step: 0.5
+            )
+            .accentColor(.blue)
+            
+            HStack {
+                Text("0.5s")
+                    .font(.system(size: 9))
+                    .foregroundColor(.secondary)
+                
+                Spacer()
+                
+                Text("5.0s")
+                    .font(.system(size: 9))
+                    .foregroundColor(.secondary)
+            }
+            
+            Text("Minimum duration for a speaker segment")
+                .font(.system(size: 10))
+                .foregroundColor(.secondary)
+                .padding(.leading, 2)
         }
     }
     

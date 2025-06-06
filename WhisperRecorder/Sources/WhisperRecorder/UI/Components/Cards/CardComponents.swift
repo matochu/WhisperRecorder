@@ -4,6 +4,7 @@ import SwiftUI
 extension AppDelegate {
     static var lastOriginalWhisperText: String = ""
     static var lastProcessedText: String = ""
+    static var lastLLMFormattedText: String = ""
     
     static var hasOriginalText: Bool {
         return !lastOriginalWhisperText.isEmpty
@@ -11,6 +12,10 @@ extension AppDelegate {
     
     static var hasProcessedText: Bool {
         return !lastProcessedText.isEmpty
+    }
+    
+    static var hasLLMFormattedText: Bool {
+        return !lastLLMFormattedText.isEmpty
     }
 }
 

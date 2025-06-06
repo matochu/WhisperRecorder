@@ -1,0 +1,20 @@
+# Minimal Speaker Diarization Dependencies for WhisperRecorder
+# Install with: pip install -r requirements_minimal.txt
+
+# Core dependencies
+torch>=2.0.0
+torchaudio>=2.0.0
+numpy>=1.21.0
+scipy>=1.7.0
+soundfile>=0.10.0
+
+# HuggingFace for model downloads
+transformers>=4.21.0
+huggingface-hub>=0.10.0
+
+# Progress and logging
+tqdm>=4.64.0
+
+# Try to install pyannote.audio without heavy dependencies
+# Note: Some features may not work without full dependencies
+# pyannote.audio>=3.1.0 

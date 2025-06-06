@@ -7,6 +7,7 @@ struct ActionsCard: View {
     @State private var lastStatus: String = ""
     @State private var lastOriginalText: String = ""
     @State private var lastProcessedText: String = ""
+    @ObservedObject private var speakerEngine = SpeakerDiarizationEngine.shared
     
     var body: some View {
         VStack(spacing: 8) {
@@ -198,5 +199,108 @@ struct ActionsCard: View {
         // Show toast with full text (no truncation)
         logInfo(.ui, "🎯 [TOAST] Showing toast: '\(toastMessage)' with full text: \(text.count) chars")
         ToastManager.shared.showToast(message: toastMessage, preview: text, type: .normal)
+    }
+    
+    // MARK: - Speaker-Specific Actions
+    
+    private func speakerCopyButton(speakerIndex: Int, speakerID: String, timeline: SpeakerTimeline) -> some View {
+        let speakingTime = timeline.speakingTime(for: speakerID)
+        let segmentCount = timeline.segments(for: speakerID).count
+        
+        return Button(action: {
+            copySpeakerText(speakerIndex: speakerIndex, speakerID: speakerID, timeline: timeline)
+        }) {
+            VStack(spacing: 2) {
+                HStack(spacing: 2) {
+                    Text("👤")
+                        .font(.system(size: 10))
+                    Text("S\(speakerIndex)")
+                        .font(.system(size: 9, weight: .medium))
+                }
+                Text("\(String(format: "%.0f", speakingTime))s")
+                    .font(.system(size: 8))
+                    .foregroundColor(.secondary)
+            }
+            .frame(maxWidth: .infinity)
+            .padding(.horizontal, 6)
+            .padding(.vertical, 4)
+            .background(Color(.controlAccentColor).opacity(0.7))
+            .foregroundColor(.white)
+            .cornerRadius(4)
+            .overlay(
+                RoundedRectangle(cornerRadius: 4)
+                    .stroke(Color(.separatorColor), lineWidth: 0.5)
+            )
+        }
+        .buttonStyle(PlainButtonStyle())
+        .help("Speaker \(speakerIndex): \(String(format: "%.1f", speakingTime))s speaking time, \(segmentCount) segments")
+    }
+    
+    private func copySpeakerText(speakerIndex: Int, speakerID: String, timeline: SpeakerTimeline) {
+        // Extract text segments for this speaker
+        // For now, we'll use a placeholder approach since we don't have segment-level transcription yet
+        let segments = timeline.segments(for: speakerID)
+        let speakingTime = timeline.speakingTime(for: speakerID)
+        
+        var speakerText = "👤 Speaker \(speakerIndex) (\(String(format: "%.1f", speakingTime))s total)\n\n"
+        
+        for (index, segment) in segments.enumerated() {
+            let timestamp = String(format: "%.1f", segment.startTime)
+            speakerText += "[\(timestamp)s] Segment \(index + 1) (\(String(format: "%.1f", segment.duration))s)\n"
+        }
+        
+        // Add note about segment-level transcription
+        speakerText += "\nNote: Segment-level transcription not yet implemented.\nThis shows speaker timeline information only."
+        
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(speakerText, forType: .string)
+        
+        let toastMessage = "Copied Speaker \(speakerIndex) info"
+        logInfo(.ui, "👤 [TOAST] Copied Speaker \(speakerIndex) text to clipboard")
+        ToastManager.shared.showToast(message: toastMessage, preview: speakerText, type: .normal)
+    }
+    
+    private func copySpeakerLabeledText() {
+        guard let timeline = speakerEngine.lastDiarizationResult else {
+            logWarning(.ui, "❌ No speaker timeline available")
+            return
+        }
+        
+        // Get the current processed or original text with speaker labels
+        let baseText = AppDelegate.hasProcessedText ? AppDelegate.lastProcessedText : AppDelegate.lastOriginalWhisperText
+        
+        if baseText.isEmpty {
+            logWarning(.ui, "❌ No text available to copy with speaker labels")
+            return
+        }
+        
+        // Create speaker-labeled version
+        var labeledText = "🎤 Speaker Diarization Results\n"
+        labeledText += "Detected \(timeline.speakerCount) speakers\n\n"
+        
+        // Add speaker summary
+        for (index, speakerID) in timeline.uniqueSpeakers.enumerated() {
+            let speakingTime = timeline.speakingTime(for: speakerID)
+            let segmentCount = timeline.segments(for: speakerID).count
+            labeledText += "👤 Speaker \(index + 1): \(String(format: "%.1f", speakingTime))s (\(segmentCount) segments)\n"
+        }
+        
+        labeledText += "\n📝 Transcript:\n\(baseText)\n\n"
+        
+        // Add timeline information
+        labeledText += "🕒 Speaker Timeline:\n"
+        for segment in timeline.segments {
+            let speakerIndex = timeline.uniqueSpeakers.firstIndex(of: segment.speakerID) ?? 0
+            let timestamp = String(format: "%.1f", segment.startTime)
+            let duration = String(format: "%.1f", segment.duration)
+            labeledText += "[\(timestamp)s-\(String(format: "%.1f", segment.endTime))s] Speaker \(speakerIndex + 1) (\(duration)s)\n"
+        }
+        
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(labeledText, forType: .string)
+        
+        let toastMessage = "Copied transcript with speaker labels"
+        logInfo(.ui, "👥 [TOAST] Copied speaker-labeled transcript to clipboard")
+        ToastManager.shared.showToast(message: toastMessage, preview: labeledText, type: .normal)
     }
 } 

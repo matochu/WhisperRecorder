@@ -578,6 +578,13 @@ class AudioRecorder: ObservableObject {
                 AppDelegate.lastProcessedText = transcription
                 logDebug(.storage, "Stored processed text (same as original): \(transcription.count) characters")
                 
+                // Add to history (no processing)
+                self.addToHistory(
+                    originalText: transcription,
+                    processedText: nil,
+                    processingType: "whisper_only"
+                )
+                
                 let totalTime = endTiming("transcription_pipeline")
                 logInfo(.performance, "🏁 Total pipeline time: \(String(format: "%.3f", totalTime ?? 0))s (Whisper only)")
 
@@ -787,6 +794,13 @@ class AudioRecorder: ObservableObject {
                 self.lastTranscription = processedText
                 AppDelegate.lastProcessedText = processedText
                 
+                // Add to history
+                self.addToHistory(
+                    originalText: originalText,
+                    processedText: processedText,
+                    processingType: processingType
+                )
+                
                 // Copy result to clipboard using copyToClipboard for auto-paste functionality
                 self.copyToClipboard(text: processedText)
                 
@@ -804,6 +818,14 @@ class AudioRecorder: ObservableObject {
                 // Fallback to original transcription
                 self.lastTranscription = originalText
                 AppDelegate.lastProcessedText = originalText
+                
+                // Add to history (failed processing)
+                self.addToHistory(
+                    originalText: originalText,
+                    processedText: nil,
+                    processingType: "failed_\(processingType)"
+                )
+                
                 self.copyToClipboard(text: originalText)
                 
                 ToastManager.shared.showToast(
@@ -813,5 +835,47 @@ class AudioRecorder: ObservableObject {
                 )
             }
         }
+    }
+    
+    // MARK: - History Management
+    
+    private func addToHistory(originalText: String, processedText: String?, processingType: String) {
+        // Get recording duration
+        let duration = recordingDurationSeconds > 0 ? TimeInterval(recordingDurationSeconds) : nil
+        
+        // Get current speaker information
+        let speakerCount: Int?
+        if let timeline = SpeakerDiarizationEngine.shared.lastDiarizationResult {
+            speakerCount = timeline.speakerCount > 1 ? timeline.speakerCount : nil
+        } else {
+            speakerCount = nil
+        }
+        
+        // Get current style and language
+        let writingStyle = selectedWritingStyle.name
+        let currentLanguage = WritingStyleManager.shared.currentTargetLanguage
+        let languageName = WritingStyleManager.supportedLanguages[currentLanguage]
+        
+        // Generate LLM format if processed text is available
+        let llmFormatted: String?
+        if let processed = processedText {
+            // Try to get timeline for LLM formatting
+            let timeline = SpeakerDiarizationEngine.shared.lastDiarizationResult
+            llmFormatted = WhisperWrapper.shared.formatForLLM(humanReadableText: processed, timeline: timeline)
+        } else {
+            llmFormatted = nil
+        }
+        
+        TranscriptionHistoryManager.shared.addTranscription(
+            originalText: originalText,
+            processedText: processedText,
+            llmFormattedText: llmFormatted,
+            duration: duration,
+            speakerCount: speakerCount,
+            writingStyle: writingStyle,
+            language: languageName
+        )
+        
+        logInfo(.storage, "Added to history: \(processingType), duration=\(duration?.description ?? "nil")s, speakers=\(speakerCount?.description ?? "nil")")
     }
 }
