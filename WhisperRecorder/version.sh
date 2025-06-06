@@ -268,25 +268,17 @@ local_release() {
         exit 1
     fi
     
-    # Step 1: Build app
+    # Step 1: Build and create release package
     echo ""
-    echo "🔨 Step 1/5: Building WhisperRecorder..."
-    if ! ./whisper build; then
-        echo "❌ Build failed"
-        exit 1
-    fi
-    
-    # Step 2: Create release package
-    echo ""
-    echo "📦 Step 2/5: Creating release package..."
+    echo "🔨 Step 1/4: Building and packaging WhisperRecorder..."
     if ! echo "" | ./whisper release; then
-        echo "❌ Release package creation failed"
+        echo "❌ Build and packaging failed"
         exit 1
     fi
     
-    # Step 3: Rename ZIP with version
+    # Step 2: Rename ZIP with version
     echo ""
-    echo "📝 Step 3/5: Renaming release package..."
+    echo "📝 Step 2/4: Renaming release package..."
     local zip_file="WhisperRecorder-v$current_version-macOS-arm64.zip"
     if [ -f "WhisperRecorder.zip" ]; then
         mv "WhisperRecorder.zip" "$zip_file"
@@ -296,14 +288,14 @@ local_release() {
         exit 1
     fi
     
-    # Step 4: Update CHANGELOG
+    # Step 3: Update CHANGELOG
     echo ""
-    echo "📝 Step 4/5: Updating CHANGELOG.md..."
+    echo "📝 Step 3/4: Updating CHANGELOG.md..."
     update_changelog "$current_version"
     
-    # Step 5: Commit changes
+    # Step 4: Commit changes
     echo ""
-    echo "💾 Step 5/5: Committing changes..."
+    echo "💾 Step 4/4: Committing changes..."
     
     git add VERSION ../CHANGELOG.md
     git commit -m "Local release v$current_version
@@ -371,29 +363,21 @@ github_publish_workflow() {
     
     # Step 1: Bump version
     echo ""
-    echo "📈 Step 1/7: Bumping version ($bump_type)..."
+    echo "📈 Step 1/6: Bumping version ($bump_type)..."
     bump_version "$bump_type"
     local new_version=$(cat VERSION)
     
-    # Step 2: Build app
+    # Step 2: Build and create release package
     echo ""
-    echo "🔨 Step 2/7: Building WhisperRecorder..."
-    if ! ./whisper build; then
-        echo "❌ Build failed"
-        exit 1
-    fi
-    
-    # Step 3: Create release package
-    echo ""
-    echo "📦 Step 3/7: Creating release package..."
+    echo "🔨 Step 2/6: Building and packaging WhisperRecorder..."
     if ! echo "" | ./whisper release; then
-        echo "❌ Release package creation failed"
+        echo "❌ Build and packaging failed"
         exit 1
     fi
     
-    # Step 4: Rename ZIP with version
+    # Step 3: Rename ZIP with version
     echo ""
-    echo "📝 Step 4/7: Renaming release package..."
+    echo "📝 Step 3/6: Renaming release package..."
     local zip_file="WhisperRecorder-v$new_version-macOS-arm64.zip"
     if [ -f "WhisperRecorder.zip" ]; then
         mv "WhisperRecorder.zip" "$zip_file"
@@ -403,19 +387,19 @@ github_publish_workflow() {
         exit 1
     fi
     
-    # Step 5: Update CHANGELOG
+    # Step 4: Update CHANGELOG
     echo ""
-    echo "📝 Step 5/7: Updating CHANGELOG.md..."
+    echo "📝 Step 4/6: Updating CHANGELOG.md..."
     update_changelog "$new_version"
     
-    # Step 6: Generate release notes
+    # Step 5: Generate release notes
     echo ""
-    echo "📋 Step 6/7: Generating release notes..."
+    echo "📋 Step 5/6: Generating release notes..."
     generate_release_notes "$new_version"
     
-    # Step 7: Commit and create GitHub release
+    # Step 6: Commit and create GitHub release
     echo ""
-    echo "🏷️  Step 7/7: Committing and creating GitHub release..."
+    echo "🏷️  Step 6/6: Committing and creating GitHub release..."
     
     # Commit changes
     git add VERSION ../CHANGELOG.md
@@ -501,25 +485,17 @@ preview_build_workflow() {
     
     echo "✅ All checks passed - ready to build!"
     
-    # Step 1: Build app
+    # Step 1: Build and create release package
     echo ""
-    echo "🔨 Step 1/6: Building WhisperRecorder..."
-    if ! ./whisper build; then
-        echo "❌ Build failed"
-        exit 1
-    fi
-    
-    # Step 2: Create release package
-    echo ""
-    echo "📦 Step 2/6: Creating release package..."
+    echo "🔨 Step 1/5: Building and packaging WhisperRecorder..."
     if ! echo "" | ./whisper release; then
-        echo "❌ Release package creation failed"
+        echo "❌ Build and packaging failed"
         exit 1
     fi
     
-    # Step 3: Rename ZIP with preview version
+    # Step 2: Rename ZIP with preview version
     echo ""
-    echo "📝 Step 3/6: Renaming release package..."
+    echo "📝 Step 2/5: Renaming release package..."
     local zip_file="WhisperRecorder-$preview_version-macOS-arm64.zip"
     if [ -f "WhisperRecorder.zip" ]; then
         mv "WhisperRecorder.zip" "$zip_file"
@@ -529,14 +505,14 @@ preview_build_workflow() {
         exit 1
     fi
     
-    # Step 4: Generate preview release notes
+    # Step 3: Generate preview release notes
     echo ""
-    echo "📋 Step 4/6: Generating preview release notes..."
+    echo "📋 Step 3/5: Generating preview release notes..."
     generate_preview_notes "$preview_version" "$branch_name"
     
-    # Step 5: Create tag
+    # Step 4: Create tag
     echo ""
-    echo "🏷️  Step 5/6: Creating preview tag..."
+    echo "🏷️  Step 4/5: Creating preview tag..."
     local tag="v$preview_version"
     
     if git tag -l | grep -q "^$tag$"; then
@@ -547,9 +523,9 @@ preview_build_workflow() {
     git tag -a "$tag" -m "Preview build $preview_version from $branch_name"
     echo "✅ Created tag: $tag"
     
-    # Step 6: Push and create GitHub release
+    # Step 5: Push and create GitHub release
     echo ""
-    echo "📤 Step 6/6: Creating GitHub preview release..."
+    echo "📤 Step 5/5: Creating GitHub preview release..."
     
     # Push tag
     git push origin "$tag"
