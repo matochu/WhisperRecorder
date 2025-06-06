@@ -75,13 +75,13 @@ jobs:
             
             NEW_VERSION="$major.$minor.$patch"
             
-            # Add branch suffix for feature branches
+            # Check that this is main/master branch (releases are for main branch only)
             BRANCH_NAME="${{ github.ref_name }}"
             if [ "$BRANCH_NAME" != "main" ] && [ "$BRANCH_NAME" != "master" ]; then
-              # Clean branch name for version suffix
-              CLEAN_BRANCH=$(echo "$BRANCH_NAME" | sed 's/[^a-zA-Z0-9-]/-/g' | sed 's/--*/-/g')
-              NEW_VERSION="$NEW_VERSION-$CLEAN_BRANCH"
-              IS_PRERELEASE=true
+              echo "❌ ERROR: Production releases are for main/master branch only!"
+              echo "Current branch: $BRANCH_NAME"
+              echo "Use the 'Demo Build' workflow for feature branch builds."
+              exit 1
             elif [ "${{ github.event.inputs.prerelease }}" = "true" ]; then
               NEW_VERSION="$NEW_VERSION-pre"
               IS_PRERELEASE=true
