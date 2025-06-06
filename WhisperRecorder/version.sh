@@ -333,7 +333,17 @@ github_publish_workflow() {
     echo "============================================="
     echo "🔵 Current version: $start_version"
     
-    # Check GitHub CLI requirements first (before build)
+    # Check ALL requirements FIRST (before any building)
+    echo ""
+    echo "🔍 Checking all requirements before build..."
+    
+    # Check if working directory is clean
+    if ! git diff-index --quiet HEAD --; then
+        echo "❌ Working directory not clean. Commit changes first."
+        exit 1
+    fi
+    
+    # Check GitHub CLI requirements
     echo ""
     echo "🔍 Checking GitHub CLI requirements..."
     
@@ -357,13 +367,7 @@ github_publish_workflow() {
         fi
     fi
     
-    echo "✅ GitHub CLI ready"
-    
-    # Check if working directory is clean
-    if ! git diff-index --quiet HEAD --; then
-        echo "❌ Working directory not clean. Commit changes first."
-        exit 1
-    fi
+    echo "✅ All checks passed - ready to build!"
     
     # Step 1: Bump version
     echo ""
@@ -461,7 +465,17 @@ preview_build_workflow() {
     echo "🔥 Preview version: $preview_version"
     echo "🌿 Branch: $branch_name"
     
-    # Check GitHub CLI requirements first (before build)
+    # Check ALL requirements FIRST (before any building)
+    echo ""
+    echo "🔍 Checking all requirements before build..."
+    
+    # Check if working directory is clean
+    if ! git diff-index --quiet HEAD --; then
+        echo "❌ Working directory not clean. Commit changes first."
+        exit 1
+    fi
+    
+    # Check GitHub CLI requirements
     echo ""
     echo "🔍 Checking GitHub CLI requirements..."
     
@@ -485,13 +499,7 @@ preview_build_workflow() {
         fi
     fi
     
-    echo "✅ GitHub CLI ready"
-    
-    # Check if working directory is clean
-    if ! git diff-index --quiet HEAD --; then
-        echo "❌ Working directory not clean. Commit changes first."
-        exit 1
-    fi
+    echo "✅ All checks passed - ready to build!"
     
     # Step 1: Build app
     echo ""
