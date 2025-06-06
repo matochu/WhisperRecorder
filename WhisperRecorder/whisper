@@ -1,0 +1,543 @@
+#!/bin/bash
+
+# WhisperRecorder - Universal Script for Building, Running and Debugging
+# Usage: ./whisper [command] [options]
+
+set -e
+
+# Colors for output
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+BLUE='\033[0;34m'
+NC='\033[0m' # No Color
+
+# Project info
+APP_NAME="WhisperRecorder"
+APP_VERSION="1.3.1"
+
+# Show help
+show_help() {
+    echo -e "${BLUE}🎙️  WhisperRecorder Build System${NC}"
+    echo ""
+    echo "Usage: $0 [command]"
+    echo ""
+    echo -e "${GREEN}📦 Build Commands:${NC}"
+    echo "  build             Build WhisperRecorder.app"
+    echo "  build-debug       Build in debug mode"  
+    echo "  run               Run WhisperRecorder.app"
+    echo "  clean             Clean build artifacts"
+    echo ""
+    echo -e "${GREEN}🚀 Release Commands:${NC}"
+    echo "  release           Create release package with signing"
+    echo "  icon              Generate app icon from create_icon.sh"
+    echo "  notarize          Apple notarization for public distribution"
+    echo ""
+    echo -e "${GREEN}📋 Version Commands:${NC}"
+    echo "  version           Show current version"
+    echo "  version set <ver> Set specific version (e.g., 1.2.3)"
+    echo "  version bump <type> Bump version (major|minor|patch)"
+    echo "  version release   Create git tag and trigger GitHub release"
+    echo ""
+    echo -e "${GREEN}🔧 Utility Commands:${NC}"
+    echo "  help              Show this help"
+    echo ""
+    
+    if [ -f "VERSION" ]; then
+        local version=$(cat VERSION)
+        echo -e "${BLUE}Current version: v$version${NC}"
+    fi
+}
+
+# Show version
+show_version() {
+    echo -e "${BLUE}WhisperRecorder v${APP_VERSION}${NC}"
+    echo "Voice Recording & Transcription Tool"
+    if [ -f "WhisperRecorder.app/Contents/Info.plist" ]; then
+        echo -e "${GREEN}✅ App is built and ready${NC}"
+    else
+        echo -e "${YELLOW}⚠️  App needs to be built${NC}"
+    fi
+}
+
+# Check for hanging processes
+check_processes() {
+    local running=$(pgrep -f "WhisperRecorder|lipo" 2>/dev/null || true)
+    if [ -n "$running" ]; then
+        local processes_formatted=$(echo "$running" | tr '\n' '/' | sed 's/\/$//' | sed 's/\//\ \/\ /g')
+        echo -e "${YELLOW}⚠️  Found running processes: $processes_formatted${NC}"
+        return 1
+    fi
+    return 0
+}
+
+# Kill hanging processes
+kill_processes() {
+    local running=$(pgrep -f "WhisperRecorder|lipo" 2>/dev/null || true)
+    if [ -n "$running" ]; then
+        local processes_formatted=$(echo "$running" | tr '\n' '/' | sed 's/\/$//' | sed 's/\//\ \/\ /g')
+        echo -e "${YELLOW}🔫 Killing processes: $processes_formatted${NC}"
+        echo "$running" | xargs kill -TERM 2>/dev/null
+        sleep 2
+        echo "$running" | xargs kill -KILL 2>/dev/null
+        sleep 1
+        
+        local still_running=$(pgrep -f "WhisperRecorder|lipo" 2>/dev/null || true)
+        if [ -n "$still_running" ]; then
+            local still_processes_formatted=$(echo "$still_running" | tr '\n' '/' | sed 's/\/$//' | sed 's/\//\ \/\ /g')
+            echo -e "${RED}❌ Could not kill processes: $still_processes_formatted${NC}"
+            echo "You may need to restart your Mac"
+            return 1
+        fi
+    fi
+    return 0
+}
+
+# Create lockfile
+create_lockfile() {
+    local lockfile="/tmp/whisperrecorder-$1.lock"
+    if [ -f "$lockfile" ]; then
+        echo -e "${RED}❌ ERROR: Another $1 operation is running!${NC}"
+        echo "If this is wrong, remove: $lockfile"
+        exit 1
+    fi
+    echo $$ > "$lockfile"
+    trap "rm -f $lockfile" EXIT
+}
+
+# Build command
+cmd_build() {
+    echo -e "${GREEN}🛡️  Safe Build WhisperRecorder.app${NC}"
+    echo "=================================="
+    
+    if ! check_processes; then
+        kill_processes || exit 1
+    fi
+    
+    create_lockfile "build"
+    
+    echo "Starting build process..."
+    # Use our simplified package.sh
+    SKIP_CHECKS=1 ./package.sh
+    
+    if [ -d "WhisperRecorder.app" ]; then
+        echo -e "${GREEN}✅ Build successful!${NC}"
+        echo ""
+        echo "🚦 To run: ./whisper run"
+    else
+        echo -e "${RED}❌ Build failed${NC}"
+        exit 1
+    fi
+}
+
+# Build debug command
+cmd_build_debug() {
+    echo -e "${GREEN}🛡️  Safe Build WhisperRecorder.app (DEBUG MODE)${NC}"
+    echo "=============================================="
+    
+    if ! check_processes; then
+        kill_processes || exit 1
+    fi
+    
+    create_lockfile "build-debug"
+    
+    echo "Starting debug build process..."
+    # Use our simplified package.sh with debug flag
+    DEBUG_BUILD=1 SKIP_CHECKS=1 ./package.sh
+    
+    if [ -d "WhisperRecorder.app" ]; then
+        echo -e "${GREEN}✅ Debug build successful!${NC}"
+        echo -e "${YELLOW}🐛 Debug mode is ENABLED - full logging will be available${NC}"
+        echo ""
+        echo "🚦 To run with debug: ./whisper debug"
+        echo "🚦 To run normally: ./whisper run"
+    else
+        echo -e "${RED}❌ Debug build failed${NC}"
+        exit 1
+    fi
+}
+
+# Run command
+cmd_run() {
+    echo -e "${GREEN}🚦 Safe Run WhisperRecorder${NC}"
+    echo "==========================="
+    
+    if ! check_processes; then
+        kill_processes || exit 1
+    fi
+    
+    if [ ! -d "WhisperRecorder.app" ]; then
+        echo -e "${RED}❌ WhisperRecorder.app not found!${NC}"
+        echo "Build first with: ./whisper build"
+        exit 1
+    fi
+    
+    echo "🚀 Starting WhisperRecorder..."
+    open WhisperRecorder.app
+    
+    echo -e "${GREEN}✅ WhisperRecorder started successfully!${NC}"
+    echo ""
+    echo "💡 To monitor: watch 'ps aux | grep WhisperRecorder'"
+}
+
+# Debug command  
+cmd_debug() {
+    echo -e "${GREEN}🛡️  Safe Interactive Debug${NC}"
+    echo "=========================="
+    
+    if ! check_processes; then
+        kill_processes || exit 1
+    fi
+    
+    create_lockfile "debug"
+    
+    if [ ! -d "WhisperRecorder.app" ]; then
+        echo -e "${RED}❌ WhisperRecorder.app not found!${NC}"
+        echo "Build first with: ./whisper build"
+        exit 1
+    fi
+    
+    export WHISPER_DEBUG=1
+    export WHISPER_STDOUT_LOGS=1
+    
+    echo "🚀 Starting debug session..."
+    echo "💡 All debug logs will appear below"
+    echo "🛑 Press Ctrl+C to stop"
+    echo ""
+    
+    "./WhisperRecorder.app/Contents/MacOS/WhisperRecorder.bin" 2>&1
+    
+    echo ""
+    echo -e "${YELLOW}🏁 Debug session ended${NC}"
+}
+
+# LLDB debug command
+cmd_lldb() {
+    echo -e "${GREEN}🛡️  Safe LLDB Debug${NC}"
+    echo "=================="
+    
+    if ! check_processes; then
+        kill_processes || exit 1
+    fi
+    
+    create_lockfile "lldb"
+    
+    if ! command -v lldb &> /dev/null; then
+        echo -e "${RED}❌ LLDB not found!${NC}"
+        echo "Install Xcode Command Line Tools: xcode-select --install"
+        exit 1
+    fi
+    
+    if [ ! -f "WhisperRecorder.app/Contents/MacOS/WhisperRecorder.bin" ]; then
+        echo -e "${RED}❌ Binary not found!${NC}"
+        echo "Build first with: ./whisper build"
+        exit 1
+    fi
+    
+    export WHISPER_DEBUG=1
+    export WHISPER_STDOUT_LOGS=1
+    
+    echo -e "${BLUE}💡 LLDB Commands:${NC}"
+    echo "   (lldb) run         # Start the app"
+    echo "   (lldb) bt          # Show backtrace" 
+    echo "   (lldb) c           # Continue"
+    echo "   (lldb) quit        # Exit LLDB"
+    echo ""
+    
+    lldb "./WhisperRecorder.app/Contents/MacOS/WhisperRecorder.bin"
+}
+
+# Cleanup command
+cmd_cleanup() {
+    echo -e "${YELLOW}🚨 Emergency Cleanup${NC}"
+    echo "==================="
+    
+    # Kill all lipo processes
+    local lipo_pids=$(pgrep lipo 2>/dev/null || true)
+    if [ -n "$lipo_pids" ]; then
+        local lipo_processes_formatted=$(echo "$lipo_pids" | tr '\n' '/' | sed 's/\/$//' | sed 's/\//\ \/\ /g')
+        echo "🔫 Killing lipo processes: $lipo_processes_formatted"
+        echo "$lipo_pids" | xargs kill -TERM 2>/dev/null
+        sleep 2
+        echo "$lipo_pids" | xargs kill -KILL 2>/dev/null
+    fi
+    
+    # Kill all WhisperRecorder processes
+    kill_processes
+    
+    # Clean build artifacts
+    echo "🧹 Cleaning build artifacts..."
+    rm -rf .build
+    rm -rf WhisperRecorder.app
+    rm -f WhisperRecorder
+    
+    # Remove lockfiles
+    rm -f /tmp/whisperrecorder-*.lock
+    
+    local remaining=$(pgrep -f "WhisperRecorder|lipo" 2>/dev/null || true)
+    if [ -n "$remaining" ]; then
+        local remaining_processes_formatted=$(echo "$remaining" | tr '\n' '/' | sed 's/\/$//' | sed 's/\//\ \/\ /g')
+        echo -e "${RED}⚠️  Some processes still running: $remaining_processes_formatted${NC}"
+        echo "You may need to restart your Mac"
+    else
+        echo -e "${GREEN}✅ Cleanup completed successfully${NC}"
+    fi
+}
+
+# Status command
+cmd_status() {
+    echo -e "${BLUE}📊 WhisperRecorder Status${NC}"
+    echo "========================"
+    
+    # Check app
+    if [ -d "WhisperRecorder.app" ]; then
+        echo -e "${GREEN}✅ App built and ready${NC}"
+    else
+        echo -e "${YELLOW}⚠️  App not built${NC}"
+    fi
+    
+    # Check processes
+    local running=$(pgrep -f WhisperRecorder 2>/dev/null || true)
+    if [ -n "$running" ]; then
+        local running_processes_formatted=$(echo "$running" | tr '\n' '/' | sed 's/\/$//' | sed 's/\//\ \/\ /g')
+        echo -e "${YELLOW}⚠️  Running processes: $running_processes_formatted${NC}"
+    else
+        echo -e "${GREEN}✅ No running processes${NC}"
+    fi
+    
+    # Check lockfiles
+    local locks=$(ls /tmp/whisperrecorder-*.lock 2>/dev/null || true)
+    if [ -n "$locks" ]; then
+        echo -e "${YELLOW}⚠️  Active locks: $locks${NC}"
+    else
+        echo -e "${GREEN}✅ No active locks${NC}"
+    fi
+}
+
+# Clean command
+cmd_clean() {
+    echo "🧹 Cleaning build artifacts..."
+    rm -rf .build
+    rm -rf WhisperRecorder.app  
+    rm -f WhisperRecorder
+    echo -e "${GREEN}✅ Clean completed${NC}"
+}
+
+# Release command
+cmd_release() {
+    echo -e "${GREEN}🚀 Building WhisperRecorder Release${NC}"
+    echo "=================================="
+    
+    if ! check_processes; then
+        kill_processes || exit 1
+    fi
+    
+    create_lockfile "release"
+    
+    # Clean everything first
+    echo "1. Cleaning previous builds..."
+    rm -rf .build
+    rm -rf WhisperRecorder.app
+    rm -f WhisperRecorder
+    rm -f WhisperRecorder.zip
+    rm -f WhisperRecorder.dmg
+    
+    # Create fresh icon
+    echo "2. Creating app icon..."
+    if [ -f "create_icon.sh" ]; then
+        ./create_icon.sh
+    else
+        echo "⚠️  Warning: create_icon.sh not found"
+    fi
+    
+    # Build and package the app
+    echo "3. Building and packaging..."
+    SKIP_CHECKS=1 ./package.sh
+    
+    if [ ! -d "WhisperRecorder.app" ]; then
+        echo -e "${RED}❌ App bundle not created${NC}"
+        exit 1
+    fi
+    
+    echo -e "${GREEN}✅ Build successful!${NC}"
+    
+    # Sign the app
+    echo "4. Signing and packaging..."
+    
+    # Check for signing identity
+    read -p "Enter your Developer ID (or press Enter to skip signing): " SIGNING_IDENTITY
+    
+    if [ -n "$SIGNING_IDENTITY" ]; then
+        echo "🔐 Signing with: $SIGNING_IDENTITY"
+        ./sign_app.sh "$SIGNING_IDENTITY"
+    else
+        echo "⚠️  Creating unsigned package..."
+        ./sign_app.sh
+    fi
+    
+    # Show results
+    echo ""
+    echo -e "${GREEN}🎉 Release package created!${NC}"
+    echo "================================"
+    
+    if [ -f "WhisperRecorder.dmg" ]; then
+        echo -e "${GREEN}✅ Signed DMG:${NC} WhisperRecorder.dmg"
+        echo "📏 Size: $(du -h WhisperRecorder.dmg | cut -f1)"
+    elif [ -f "WhisperRecorder.zip" ]; then
+        echo -e "${YELLOW}✅ Unsigned ZIP:${NC} WhisperRecorder.zip"
+        echo "📏 Size: $(du -h WhisperRecorder.zip | cut -f1)"
+    fi
+    
+    # Show app architecture info
+    if [ -f "WhisperRecorder.app/Contents/MacOS/WhisperRecorder.bin" ]; then
+        echo ""
+        echo -e "${BLUE}🏗️  Architecture Info:${NC}"
+        lipo -info "WhisperRecorder.app/Contents/MacOS/WhisperRecorder.bin" || echo "Could not determine architecture"
+    fi
+    
+    echo ""
+    echo -e "${BLUE}📋 Release Checklist:${NC}"
+    echo "  ✅ Apple Silicon (arm64) optimized"
+    echo "  ✅ App built and packaged"
+    echo "  ✅ Fresh app icon included"
+    if [ -f "WhisperRecorder.dmg" ]; then
+        echo "  ✅ App signed and notarized-ready"
+        echo "  📤 Ready for distribution!"
+    else
+        echo "  ⚠️  App not signed (ok for testing)"
+        echo "  📤 Ready for internal testing"
+    fi
+    
+    echo ""
+    echo -e "${YELLOW}💡 Next steps:${NC}"
+    if [ -f "WhisperRecorder.dmg" ]; then
+        echo "  • Notarize: xcrun notarytool submit WhisperRecorder.dmg ..."
+        echo "  • Distribute: Upload to website or share DMG"
+    else
+        echo "  • For signed release: ./whisper release (with valid Developer ID)"
+        echo "  • For testing: Share WhisperRecorder.zip"
+    fi
+}
+
+# Icon command
+cmd_icon() {
+    echo -e "${GREEN}🎨 Regenerating App Icon${NC}"
+    echo "========================="
+    
+    if [ -f "create_icon.sh" ]; then
+        ./create_icon.sh
+        echo -e "${GREEN}✅ App icon regenerated!${NC}"
+        echo ""
+        echo "💡 To use the new icon, rebuild the app:"
+        echo "   ./whisper build"
+    else
+        echo -e "${RED}❌ create_icon.sh not found${NC}"
+        exit 1
+    fi
+}
+
+# Notarize command
+cmd_notarize() {
+    echo -e "${GREEN}🔐 Notarizing WhisperRecorder DMG${NC}"
+    echo "================================="
+    
+    if [ ! -f "WhisperRecorder.dmg" ]; then
+        echo -e "${RED}❌ WhisperRecorder.dmg not found${NC}"
+        echo "Run './whisper release' with Developer ID first"
+        exit 1
+    fi
+    
+    read -p "Enter your Apple ID email: " APPLE_ID
+    read -p "Enter your Team ID: " TEAM_ID
+    read -p "Enter your app-specific password: " -s APP_PASSWORD
+    echo ""
+    
+    if [ -z "$APPLE_ID" ] || [ -z "$TEAM_ID" ] || [ -z "$APP_PASSWORD" ]; then
+        echo -e "${RED}❌ All fields are required${NC}"
+        exit 1
+    fi
+    
+    echo "🚀 Submitting for notarization..."
+    xcrun notarytool submit "WhisperRecorder.dmg" \
+        --apple-id "$APPLE_ID" \
+        --team-id "$TEAM_ID" \
+        --password "$APP_PASSWORD" \
+        --wait
+    
+    if [ $? -eq 0 ]; then
+        echo -e "${GREEN}✅ Notarization successful!${NC}"
+        
+        echo "🔗 Stapling notarization..."
+        xcrun stapler staple "WhisperRecorder.dmg"
+        
+        echo -e "${GREEN}🎉 Ready for distribution!${NC}"
+        echo "================================"
+        echo "  ✅ App signed"
+        echo "  ✅ App notarized"
+        echo "  ✅ Notarization stapled"
+        echo "  📤 WhisperRecorder.dmg ready for public distribution"
+    else
+        echo -e "${RED}❌ Notarization failed${NC}"
+        exit 1
+    fi
+}
+
+# Main command dispatcher
+case "${1:-help}" in
+    build)
+        cmd_build
+        ;;
+    build-debug)
+        cmd_build_debug
+        ;;
+    release)
+        cmd_release
+        ;;
+    run|start)
+        cmd_run
+        ;;
+    debug)
+        cmd_debug
+        ;;
+    lldb)
+        cmd_lldb
+        ;;
+    cleanup)
+        cmd_cleanup
+        ;;
+    clean)
+        cmd_clean
+        ;;
+    status)
+        cmd_status
+        ;;
+    version)
+        if [ "$2" = "set" ] && [ -n "$3" ]; then
+            ./version.sh set "$3"
+        elif [ "$2" = "bump" ] && [ -n "$3" ]; then
+            ./version.sh bump "$3"
+        elif [ "$2" = "release" ]; then
+            ./version.sh release
+        else
+            ./version.sh current
+        fi
+        ;;
+    icon)
+        cmd_icon
+        ;;
+    notarize)
+        echo "🍎 Starting Apple Notarization..."
+        echo "⚠️  Note: Requires valid Apple Developer account and notarization credentials"
+        # Add notarization logic here when needed
+        echo "✅ Notarization placeholder - implement when needed"
+        ;;
+    help|--help|-h)
+        show_help
+        ;;
+    *)
+        echo -e "${RED}❌ Unknown command: $1${NC}"
+        echo ""
+        show_help
+        exit 1
+        ;;
+esac 

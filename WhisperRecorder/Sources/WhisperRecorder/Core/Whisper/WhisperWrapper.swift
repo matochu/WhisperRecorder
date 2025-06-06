@@ -56,7 +56,7 @@ class WhisperWrapper {
     var onDownloadProgressUpdate: (() -> Void)?
 
     private init() {
-        writeLog("WhisperWrapper initializing")
+        logInfo(.whisper, "WhisperWrapper initializing")
 
         // Try to get saved model from user defaults
         let defaults = UserDefaults.standard
@@ -72,11 +72,11 @@ class WhisperWrapper {
         // Set language detection based on model type
         useLanguageDetection =
             !currentModel.id.hasSuffix(".en") && currentModel.language == "Multilingual"
-        writeLog(
+        logInfo(.whisper,
             "Set language detection to \(useLanguageDetection) for model \(currentModel.displayName)"
         )
 
-        writeLog("Using model: \(currentModel.displayName) (\(currentModel.id))")
+        logInfo(.whisper, "Using model: \(currentModel.displayName) (\(currentModel.id))")
 
         // Check for model in application support directory
         checkAndLoadModel()
@@ -91,7 +91,7 @@ class WhisperWrapper {
 
         if FileManager.default.fileExists(atPath: appSupportModelPath) {
             modelPath = appSupportModelPath
-            writeLog("Using model from application support directory: \(appSupportModelPath)")
+            logInfo(.whisper, "Using model from application support directory: \(appSupportModelPath)")
             loadModel()
             return
         }
@@ -101,11 +101,11 @@ class WhisperWrapper {
             let resourceModelPath = "\(bundleResourcesPath)/\(modelName)"
             if FileManager.default.fileExists(atPath: resourceModelPath) {
                 modelPath = resourceModelPath
-                writeLog("Using model from environment variable path: \(resourceModelPath)")
+                logInfo(.whisper, "Using model from environment variable path: \(resourceModelPath)")
                 loadModel()
                 return
             } else {
-                writeLog("Model not found at environment path: \(resourceModelPath)")
+                logWarning(.whisper, "Model not found at environment path: \(resourceModelPath)")
             }
         }
 
@@ -116,7 +116,7 @@ class WhisperWrapper {
 
         if FileManager.default.fileExists(atPath: documentsModelPath) {
             modelPath = documentsModelPath
-            writeLog("Using model from documents directory: \(documentsModelPath)")
+            logInfo(.whisper, "Using model from documents directory: \(documentsModelPath)")
             loadModel()
             return
         }
@@ -124,7 +124,7 @@ class WhisperWrapper {
         // No model found, will need to download
         // Set the model path to where we want to save it
         modelPath = appSupportModelPath
-        writeLog(
+        logWarning(.whisper,
             "Whisper model not found. Will need to download \(modelName) to \(appSupportModelPath)")
     }
 
@@ -138,7 +138,7 @@ class WhisperWrapper {
                 at: appSupportPath, withIntermediateDirectories: true)
             return appSupportPath
         } catch {
-            writeLog("Failed to create app support directory: \(error)")
+            logError(.storage, "Failed to create app support directory: \(error)")
             return FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
         }
     }
@@ -146,7 +146,7 @@ class WhisperWrapper {
     deinit {
         if let wrapper = wrapper {
             whisper_wrapper_free(wrapper)
-            writeLog("WhisperWrapper freed")
+            logInfo(.whisper, "WhisperWrapper freed")
         }
     }
 
@@ -162,7 +162,7 @@ class WhisperWrapper {
 
         // Automatically set language detection based on model type
         useLanguageDetection = !model.id.hasSuffix(".en") && model.language == "Multilingual"
-        writeLog("Set language detection to \(useLanguageDetection) for model \(model.displayName)")
+        logInfo(.whisper, "Set language detection to \(useLanguageDetection) for model \(model.displayName)")
 
         // Save user preference
         UserDefaults.standard.set(model.id, forKey: "selectedWhisperModel")
@@ -176,21 +176,22 @@ class WhisperWrapper {
             loadModel()
             completion(true)
         } else {
-            writeLog("Model \(model.filename) not found and needs to be downloaded")
+            logWarning(.whisper, "Model \(model.filename) not found and needs to be downloaded")
             completion(false)
         }
     }
 
     func downloadCurrentModel(completion: @escaping (Bool) -> Void) {
         guard let modelPath = modelPath else {
-            writeLog("Error: modelPath is nil in downloadModel()")
+            logError(.network, "Error: modelPath is nil in downloadModel()")
             completion(false)
             return
         }
 
         let modelURL = currentModel.downloadURL
-        writeLog("Downloading model from: \(modelURL)")
+        logInfo(.network, "Downloading model from: \(modelURL)")
 
+        startTiming("model_download")
         isDownloading = true
         downloadProgress = 0.0
         onDownloadProgressUpdate?()
@@ -200,13 +201,13 @@ class WhisperWrapper {
             self.isDownloading = false
 
             if let error = error {
-                writeLog("Error downloading model: \(error)")
+                logError(.network, "Error downloading model: \(error)")
                 completion(false)
                 return
             }
 
             guard let tempURL = tempURL else {
-                writeLog("Error: No temporary URL for downloaded file")
+                logError(.network, "Error: No temporary URL for downloaded file")
                 completion(false)
                 return
             }
@@ -224,7 +225,7 @@ class WhisperWrapper {
                 }
 
                 try FileManager.default.moveItem(at: tempURL, to: URL(fileURLWithPath: modelPath))
-                writeLog("Model downloaded successfully to \(modelPath)")
+                logInfo(.storage, "Model downloaded successfully to \(modelPath)")
 
                 // Initialize whisper context
                 DispatchQueue.main.async {
@@ -232,7 +233,7 @@ class WhisperWrapper {
                     completion(true)
                 }
             } catch {
-                writeLog("Error saving downloaded model: \(error)")
+                logError(.storage, "Error saving downloaded model: \(error)")
                 completion(false)
             }
         }
@@ -251,16 +252,16 @@ class WhisperWrapper {
         // Store observation as an associated object to prevent it from being deallocated
         objc_setAssociatedObject(downloadTask, "observation", observation, .OBJC_ASSOCIATION_RETAIN)
 
-        writeLog("Started downloading Whisper model...")
+        logInfo(.network, "Started downloading Whisper model...")
     }
 
     private func loadModel() {
         guard let modelPath = modelPath else {
-            writeLog("Error: modelPath is nil in loadModel()")
+            logError(.storage, "Error: modelPath is nil in loadModel()")
             return
         }
 
-        writeLog("Loading model from path: \(modelPath)")
+        logInfo(.storage, "Loading model from path: \(modelPath)")
 
         // Check if file exists and get its size
         let fileManager = FileManager.default
@@ -268,29 +269,29 @@ class WhisperWrapper {
             do {
                 let attributes = try fileManager.attributesOfItem(atPath: modelPath)
                 if let size = attributes[.size] as? UInt64 {
-                    writeLog("Model file size: \(size) bytes")
+                    logInfo(.storage, "Model file size: \(size) bytes")
                 }
             } catch {
-                writeLog("Error getting model file attributes: \(error)")
+                logError(.storage, "Error getting model file attributes: \(error)")
             }
         } else {
-            writeLog("Error: Model file does not exist at path \(modelPath)")
+            logError(.storage, "Error: Model file does not exist at path \(modelPath)")
         }
 
         wrapper = whisper_wrapper_create(modelPath)
 
         if wrapper == nil {
-            writeLog("Failed to initialize whisper context")
+            logError(.storage, "Failed to initialize whisper context")
 
             // Add details for debugging
             let libraryPaths = ProcessInfo.processInfo.environment["DYLD_LIBRARY_PATH"] ?? "not set"
-            writeLog("DYLD_LIBRARY_PATH: \(libraryPaths)")
+            logInfo(.storage, "DYLD_LIBRARY_PATH: \(libraryPaths)")
 
             if let insertLibs = ProcessInfo.processInfo.environment["DYLD_INSERT_LIBRARIES"] {
-                writeLog("DYLD_INSERT_LIBRARIES: \(insertLibs)")
+                logInfo(.storage, "DYLD_INSERT_LIBRARIES: \(insertLibs)")
             }
         } else {
-            writeLog("Whisper model loaded successfully")
+            logInfo(.storage, "Whisper model loaded successfully")
         }
     }
 
@@ -299,15 +300,15 @@ class WhisperWrapper {
     }
 
     func transcribe(audioFile: URL) -> String {
-        writeLog("Transcribe called for audio file: \(audioFile.path)")
+        logInfo(.whisper, "Transcribe called for audio file: \(audioFile.path)")
 
         guard let wrapper = wrapper else {
-            writeLog("Whisper context not initialized")
+            logError(.storage, "Whisper context not initialized")
             return "Error: Whisper model not loaded"
         }
 
         guard whisper_wrapper_is_loaded(wrapper) else {
-            writeLog("Whisper model is not properly loaded")
+            logError(.storage, "Whisper model is not properly loaded")
             return "Error: Whisper model not properly loaded"
         }
 
@@ -315,18 +316,18 @@ class WhisperWrapper {
         do {
             let attributes = try FileManager.default.attributesOfItem(atPath: audioFile.path)
             let fileSize = attributes[.size] as? UInt64 ?? 0
-            writeLog("Audio file size: \(fileSize) bytes")
+            logInfo(.storage, "Audio file size: \(fileSize) bytes")
             if fileSize == 0 {
-                writeLog("Error: Audio file is empty")
+                logError(.storage, "Error: Audio file is empty")
                 return "Error: Audio file is empty. Please try again."
             }
         } catch {
-            writeLog("Error checking file: \(error)")
+            logError(.storage, "Error checking file: \(error)")
         }
 
         // Verify file exists
         guard FileManager.default.fileExists(atPath: audioFile.path) else {
-            writeLog("Error: Audio file doesn't exist at path \(audioFile.path)")
+            logError(.storage, "Error: Audio file doesn't exist at path \(audioFile.path)")
             return "Error: Audio file not found"
         }
 
@@ -346,7 +347,7 @@ class WhisperWrapper {
                 // Load time range using the modern API
                 let timeRange = try? await firstTrack.load(.timeRange)
                 durationSeconds = timeRange?.duration.seconds ?? 0
-                writeLog("Audio track found: duration = \(durationSeconds)s")
+                logInfo(.storage, "Audio track found: duration = \(durationSeconds)s")
             }
             semaphore.signal()
         }
@@ -355,8 +356,8 @@ class WhisperWrapper {
         _ = semaphore.wait(timeout: .now() + 1.0)
 
         // Use the original file directly without conversion
-        writeLog("Transcribing file directly: \(audioFile.path)")
-        writeLog("Using language detection: \(useLanguageDetection)")
+        logInfo(.whisper, "Transcribing file directly: \(audioFile.path)")
+        logInfo(.whisper, "Using language detection: \(useLanguageDetection)")
 
         // Use the version with language detection parameter
         let result = whisper_wrapper_transcribe_with_lang(
@@ -365,40 +366,40 @@ class WhisperWrapper {
         if let result = result, let transcription = String(cString: result, encoding: .utf8) {
             // Check if it's an error message
             if transcription.starts(with: "Error:") {
-                writeLog("Transcription error: \(transcription)")
+                logError(.storage, "Transcription error: \(transcription)")
                 return "Failed to transcribe audio. Please try again."
             }
 
             // Trim any whitespace and check if it's empty
             let trimmed = transcription.trimmingCharacters(in: CharacterSet.whitespacesAndNewlines)
             if trimmed.isEmpty {
-                writeLog("No speech detected")
+                logError(.storage, "No speech detected")
                 return "No speech detected. Please try again."
             }
 
-            writeLog("Transcription result: \(trimmed)")
+            logInfo(.storage, "Transcription result: \(trimmed)")
             return trimmed
         } else {
-            writeLog("Failed to get transcription result")
+            logError(.storage, "Failed to get transcription result")
             return "Error: Failed to transcribe audio"
         }
     }
 
     func transcribePCM(audioData: [Float]) -> String {
-        writeLog("TranscribePCM called with \(audioData.count) samples")
+        logInfo(.whisper, "TranscribePCM called with \(audioData.count) samples")
 
         guard let wrapper = wrapper else {
-            writeLog("Whisper context not initialized")
+            logError(.storage, "Whisper context not initialized")
             return "Error: Whisper model not loaded"
         }
 
         guard whisper_wrapper_is_loaded(wrapper) else {
-            writeLog("Whisper model is not properly loaded")
+            logError(.storage, "Whisper model is not properly loaded")
             return "Error: Whisper model not properly loaded"
         }
 
         if audioData.isEmpty {
-            writeLog("Error: Empty PCM data")
+            logError(.storage, "Error: Empty PCM data")
             return "Error: No audio data provided"
         }
 
@@ -406,7 +407,7 @@ class WhisperWrapper {
         let tempURL = saveAudioToTempFile(samples: audioData)
 
         guard let tempURL = tempURL else {
-            writeLog("Failed to save PCM data to temporary file")
+            logError(.storage, "Failed to save PCM data to temporary file")
             return "Error: Could not process audio data"
         }
 
@@ -424,14 +425,14 @@ class WhisperWrapper {
         let tempDir = FileManager.default.temporaryDirectory
         let fileURL = tempDir.appendingPathComponent("whisper_audio_\(UUID().uuidString).wav")
 
-        writeLog("Saving PCM data to temporary file: \(fileURL.path)")
+        logInfo(.storage, "Saving PCM data to temporary file: \(fileURL.path)")
 
         // Create WAV file with PCM data
         do {
             try createWavFile(at: fileURL, from: samples, sampleRate: 16000)
             return fileURL
         } catch {
-            writeLog("Error creating WAV file: \(error)")
+            logError(.storage, "Error creating WAV file: \(error)")
             return nil
         }
     }
@@ -477,10 +478,65 @@ class WhisperWrapper {
 
         // Write to file
         try data.write(to: url)
-        writeLog("WAV file created successfully with \(samples.count) samples")
+        logInfo(.storage, "WAV file created successfully with \(samples.count) samples")
     }
 
     var needsModelDownload: Bool {
         return wrapper == nil || !whisper_wrapper_is_loaded(wrapper)
+    }
+
+    // MARK: - Model Management Functions
+    
+    /// Check if a specific model is downloaded
+    func isModelDownloaded(_ model: WhisperModel) -> Bool {
+        let appSupportPath = getAppSupportDirectory()
+        let modelPath = appSupportPath.appendingPathComponent(model.filename).path
+        return FileManager.default.fileExists(atPath: modelPath)
+    }
+    
+    /// Get the file size of a downloaded model
+    func getModelFileSize(_ model: WhisperModel) -> UInt64? {
+        let appSupportPath = getAppSupportDirectory()
+        let modelPath = appSupportPath.appendingPathComponent(model.filename).path
+        
+        do {
+            let attributes = try FileManager.default.attributesOfItem(atPath: modelPath)
+            return attributes[.size] as? UInt64
+        } catch {
+            return nil
+        }
+    }
+    
+    /// Delete a downloaded model
+    func deleteModel(_ model: WhisperModel, completion: @escaping (Bool) -> Void) {
+        let appSupportPath = getAppSupportDirectory()
+        let modelPath = appSupportPath.appendingPathComponent(model.filename).path
+        
+        // Check if trying to delete the currently loaded model
+        if model.id == currentModel.id && isModelLoaded() {
+            logWarning(.storage, "Cannot delete currently loaded model: \(model.displayName)")
+            completion(false)
+            return
+        }
+        
+        // Delete the model file
+        do {
+            if FileManager.default.fileExists(atPath: modelPath) {
+                try FileManager.default.removeItem(atPath: modelPath)
+                logInfo(.storage, "Successfully deleted model: \(model.displayName)")
+                completion(true)
+            } else {
+                logWarning(.storage, "Model file not found for deletion: \(model.displayName)")
+                completion(false)
+            }
+        } catch {
+            logError(.storage, "Failed to delete model \(model.displayName): \(error)")
+            completion(false)
+        }
+    }
+    
+    /// Get list of downloaded models
+    func getDownloadedModels() -> [WhisperModel] {
+        return WhisperWrapper.availableModels.filter { isModelDownloaded($0) }
     }
 }

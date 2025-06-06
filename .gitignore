@@ -58,3 +58,6 @@ cmake-build-debug/
 .cxx/
 .gradle/
 local.properties
+
+.cursor/
+*.code-workspace

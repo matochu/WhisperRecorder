@@ -1,0 +1,21 @@
+#!/bin/bash
+
+# WhisperRecorder - Root Level Convenience Script
+# This is a convenience wrapper that calls the main script in WhisperRecorder directory
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+WHISPER_DIR="$SCRIPT_DIR/WhisperRecorder"
+
+if [ ! -d "$WHISPER_DIR" ]; then
+    echo "❌ WhisperRecorder directory not found at $WHISPER_DIR"
+    exit 1
+fi
+
+if [ ! -f "$WHISPER_DIR/whisper" ]; then
+    echo "❌ WhisperRecorder script not found at $WHISPER_DIR/whisper"
+    exit 1
+fi
+
+# Change to WhisperRecorder directory and run the main script
+cd "$WHISPER_DIR"
+exec "./whisper" "$@" 

@@ -35,48 +35,92 @@ class SystemAudioManager: ObservableObject {
 
         if status == noErr {
             audioDeviceID = deviceID
-            writeLog("SystemAudioManager: Found default output device ID: \(deviceID)")
+            logInfo(.audio, "SystemAudioManager: Found default output device ID: \(deviceID)")
         } else {
-            writeLog("SystemAudioManager: Failed to get default output device, error: \(status)")
+            logError(.audio, "SystemAudioManager: Failed to get default output device, error: \(status)")
         }
     }
 
     func muteSystemAudio() {
         guard audioDeviceID != kAudioObjectUnknown else {
-            writeLog("SystemAudioManager: No audio device available for muting")
+            logError(.audio, "SystemAudioManager: No audio device available for muting")
             return
         }
 
-        // Store current volume and mute state
+        // Store the current volume and mute state for restoration
         previousVolume = getCurrentVolume()
         wasSystemMuted = isSystemMuted()
 
-        writeLog(
+        logInfo(.audio,
             "SystemAudioManager: Storing current volume: \(previousVolume), muted: \(wasSystemMuted)"
         )
 
-        // Mute the system audio
-        setSystemMuted(true)
-
-        writeLog("SystemAudioManager: System audio muted for recording")
+        // Mute the system audio with timeout protection
+        DispatchQueue.global(qos: .userInitiated).async {
+            let timeoutSeconds: TimeInterval = 2.0
+            let group = DispatchGroup()
+            group.enter()
+            
+            var success = false
+            DispatchQueue.global(qos: .utility).async {
+                success = self.setSystemMuted(true)
+                group.leave()
+            }
+            
+            let result = group.wait(timeout: .now() + timeoutSeconds)
+            
+            DispatchQueue.main.async {
+                if result == .timedOut {
+                    logError(.audio, "SystemAudioManager: Mute operation timed out after \(timeoutSeconds)s")
+                } else if success {
+                    logInfo(.audio, "SystemAudioManager: System audio muted for recording")
+                } else {
+                    logError(.audio, "SystemAudioManager: Failed to mute system audio")
+                }
+            }
+        }
     }
 
     func unmuteSystemAudio() {
         guard audioDeviceID != kAudioObjectUnknown else {
-            writeLog("SystemAudioManager: No audio device available for unmuting")
+            logError(.audio, "SystemAudioManager: No audio device available for unmuting")
             return
         }
 
-        // Restore previous mute state
-        if !wasSystemMuted {
-            setSystemMuted(false)
-            // Restore previous volume
-            setVolume(previousVolume)
-        }
-
-        writeLog(
-            "SystemAudioManager: System audio restored to volume: \(previousVolume), muted: \(wasSystemMuted)"
+        logInfo(.audio,
+            "SystemAudioManager: Restoring volume: \(previousVolume), was muted: \(wasSystemMuted)"
         )
+
+        // Restore the system audio with timeout protection
+        DispatchQueue.global(qos: .userInitiated).async {
+            let timeoutSeconds: TimeInterval = 2.0
+            let group = DispatchGroup()
+            group.enter()
+            
+            var success = false
+            DispatchQueue.global(qos: .utility).async {
+                // Restore the original mute state
+                if !self.wasSystemMuted {
+                    success = self.setSystemMuted(false)
+                }
+                
+                // Restore the original volume
+                if success || self.wasSystemMuted {
+                    self.setVolume(self.previousVolume)
+        }
+                group.leave()
+            }
+            
+            let result = group.wait(timeout: .now() + timeoutSeconds)
+            
+            DispatchQueue.main.async {
+                if result == .timedOut {
+                    logError(.audio, "SystemAudioManager: Unmute operation timed out after \(timeoutSeconds)s")
+                } else {
+                    logInfo(.audio, "SystemAudioManager: System audio restored after recording")
+                }
+            }
+        }
     }
 
     private func getCurrentVolume() -> Float {
@@ -101,7 +145,7 @@ class SystemAudioManager: ObservableObject {
         if status == noErr {
             return volume
         } else {
-            writeLog("SystemAudioManager: Failed to get current volume, error: \(status)")
+            logError(.audio, "SystemAudioManager: Failed to get current volume, error: \(status)")
             return 0.0
         }
     }
@@ -126,7 +170,7 @@ class SystemAudioManager: ObservableObject {
         )
 
         if status != noErr {
-            writeLog("SystemAudioManager: Failed to set volume, error: \(status)")
+            logError(.audio, "SystemAudioManager: Failed to set volume, error: \(status)")
         }
     }
 
@@ -152,12 +196,12 @@ class SystemAudioManager: ObservableObject {
         if status == noErr {
             return muted != 0
         } else {
-            writeLog("SystemAudioManager: Failed to get mute state, error: \(status)")
+            logError(.audio, "SystemAudioManager: Failed to get mute state, error: \(status)")
             return false
         }
     }
 
-    private func setSystemMuted(_ muted: Bool) {
+    private func setSystemMuted(_ muted: Bool) -> Bool {
         var mutedValue: UInt32 = muted ? 1 : 0
         let dataSize = UInt32(MemoryLayout<UInt32>.size)
 
@@ -177,18 +221,28 @@ class SystemAudioManager: ObservableObject {
         )
 
         if status != noErr {
-            writeLog("SystemAudioManager: Failed to set mute state, error: \(status)")
+            logError(.audio, "SystemAudioManager: Failed to set mute state, error: \(status)")
+            return false
         }
+        return true
     }
 
     // Emergency restore function - called on app termination
-    func emergencyRestore() {
+    func emergencyRestoreAudio() {
+        logWarning(.audio, "SystemAudioManager: Emergency audio restore called")
+        
+        // Attempt to restore to a safe state
         if !wasSystemMuted {
-            writeLog("SystemAudioManager: Emergency restore - unmuting system audio")
-            setSystemMuted(false)
+            logInfo(.audio, "SystemAudioManager: Emergency restore - unmuting system audio")
+            _ = setSystemMuted(false)
             if previousVolume > 0 {
                 setVolume(previousVolume)
             }
         }
+    }
+    
+    // Alias for emergencyRestoreAudio for backwards compatibility
+    func emergencyRestore() {
+        emergencyRestoreAudio()
     }
 }
