@@ -8,21 +8,21 @@ private struct SemanticVersion: Comparable {
     let preRelease: String?
 
     init?(versionString: String) {
-        // Parse version string like "1.2.3" or "1.2.3-beta1"
+        // Parse version string like "1.2", "1.2.3" or "1.2.3-beta1"
         let components = versionString.split(separator: "-", maxSplits: 1)
         let numbers = components[0].split(separator: ".")
 
-        guard numbers.count == 3,
+        guard numbers.count >= 2,
             let major = Int(numbers[0]),
-            let minor = Int(numbers[1]),
-            let patch = Int(numbers[2])
+            let minor = Int(numbers[1])
         else {
             return nil
         }
 
         self.major = major
         self.minor = minor
-        self.patch = patch
+        // If patch version is not provided, default to 0
+        self.patch = numbers.count > 2 ? (Int(numbers[2]) ?? 0) : 0
         self.preRelease = components.count > 1 ? String(components[1]) : nil
     }
 
@@ -133,13 +133,17 @@ class AutoUpdater: NSObject {
             )
 
             // Parse and compare semantic versions
-            guard let currentSemVer = SemanticVersion(versionString: currentVersion),
-                let newSemVer = SemanticVersion(versionString: newVersion)
-            else {
-                logError(.system,
-                    "Error: Invalid version format. Current: \(currentVersion), New: \(newVersion)")
+            guard let currentSemVer = SemanticVersion(versionString: currentVersion) else {
+                logError(.system, "Error: Invalid current version format: \(currentVersion)")
                 return
             }
+            
+            guard let newSemVer = SemanticVersion(versionString: newVersion) else {
+                logError(.system, "Error: Invalid new version format: \(newVersion)")
+                return
+            }
+            
+            logInfo(.system, "Parsed versions - Current: \(currentSemVer.major).\(currentSemVer.minor).\(currentSemVer.patch), New: \(newSemVer.major).\(newSemVer.minor).\(newSemVer.patch)")
 
             self.updateAvailable = newSemVer > currentSemVer
             self.latestVersion = newVersion
