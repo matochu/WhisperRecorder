@@ -39,6 +39,7 @@ show_help() {
     echo "  version bump <type> Bump version (major|minor|patch)"
     echo "  version release   Local release (build, package, changelog)"
     echo "  version publish <type> GitHub release (bump, build, upload)"
+    echo "  version preview   Preview build (no bump, GitHub pre-release)"
     echo ""
     echo -e "${GREEN}🔧 Utility Commands:${NC}"
     echo "  help              Show this help"
@@ -523,6 +524,8 @@ case "${1:-help}" in
             ./version.sh publish "$3"
         elif [ "$2" = "tag-release" ]; then
             ./version.sh tag-release
+        elif [ "$2" = "preview" ]; then
+            ./version.sh preview
         else
             ./version.sh current
         fi

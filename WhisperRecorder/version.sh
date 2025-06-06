@@ -19,6 +19,7 @@ show_help() {
     echo "  tag-release       Create git tag and push (trigger GitHub workflow)"
     echo "  release           Local release (build, package, changelog, commit)"
     echo "  publish <type>    Full workflow (bump, build, changelog, GitHub release)"
+    echo "  preview           Preview build (no bump, GitHub pre-release)"
     echo ""
     echo "Local workflow:"
     echo "  release           Build current version, update changelog, commit"
@@ -27,6 +28,7 @@ show_help() {
     echo "  publish major     Bump major → build → changelog → GitHub release"
     echo "  publish minor     Bump minor → build → changelog → GitHub release"
     echo "  publish patch     Bump patch → build → changelog → GitHub release"
+    echo "  preview           Preview build → GitHub pre-release (no version bump)"
     echo ""
     echo "Current version: $CURRENT_VERSION"
 }
@@ -416,6 +418,196 @@ github_publish_workflow() {
     echo "🌐 GitHub: https://github.com/$(git config --get remote.origin.url | sed 's/.*github.com[:/]\([^.]*\).*/\1/')/releases/latest"
 }
 
+preview_build_workflow() {
+    local base_version=$(cat VERSION)
+    local date_stamp=$(date +%Y%m%d-%H%M)
+    local preview_version="$base_version-preview-$date_stamp"
+    local branch_name=$(git rev-parse --abbrev-ref HEAD)
+    
+    echo "🔥 Starting Preview Build workflow"
+    echo "================================="
+    echo "🔵 Base version: $base_version"
+    echo "🔥 Preview version: $preview_version"
+    echo "🌿 Branch: $branch_name"
+    
+    # Check if working directory is clean
+    if ! git diff-index --quiet HEAD --; then
+        echo "❌ Working directory not clean. Commit changes first."
+        exit 1
+    fi
+    
+    # Step 1: Build app
+    echo ""
+    echo "🔨 Step 1/6: Building WhisperRecorder..."
+    if ! ./whisper build; then
+        echo "❌ Build failed"
+        exit 1
+    fi
+    
+    # Step 2: Create release package
+    echo ""
+    echo "📦 Step 2/6: Creating release package..."
+    if ! echo "" | ./whisper release; then
+        echo "❌ Release package creation failed"
+        exit 1
+    fi
+    
+    # Step 3: Rename ZIP with preview version
+    echo ""
+    echo "📝 Step 3/6: Renaming release package..."
+    local zip_file="WhisperRecorder-$preview_version-macOS-arm64.zip"
+    if [ -f "WhisperRecorder.zip" ]; then
+        mv "WhisperRecorder.zip" "$zip_file"
+        echo "✅ Created: $zip_file"
+    else
+        echo "❌ WhisperRecorder.zip not found"
+        exit 1
+    fi
+    
+    # Step 4: Generate preview release notes
+    echo ""
+    echo "📋 Step 4/6: Generating preview release notes..."
+    generate_preview_notes "$preview_version" "$branch_name"
+    
+    # Step 5: Create tag
+    echo ""
+    echo "🏷️  Step 5/6: Creating preview tag..."
+    local tag="preview-$preview_version"
+    
+    if git tag -l | grep -q "^$tag$"; then
+        echo "❌ Tag $tag already exists"
+        exit 1
+    fi
+    
+    git tag -a "$tag" -m "Preview build $preview_version from $branch_name"
+    echo "✅ Created tag: $tag"
+    
+    # Step 6: Push and create GitHub release
+    echo ""
+    echo "📤 Step 6/6: Creating GitHub preview release..."
+    
+    # Push tag
+    git push origin "$tag"
+    
+    # Create GitHub preview release
+    create_preview_github_release "$preview_version" "$tag" "$zip_file"
+    
+    # Cleanup
+    rm -f release_notes.md
+    
+    echo ""
+    echo "🔥 Preview build workflow completed!"
+    echo "===================================="
+    echo "🔵 Base version: $base_version"
+    echo "🔥 Preview: $preview_version"
+    echo "📦 Package: $zip_file"
+    echo "🏷️  Tag: $tag"
+    echo "🌿 Branch: $branch_name"
+    echo "🌐 GitHub: https://github.com/$(git config --get remote.origin.url | sed 's/.*github.com[:/]\([^.]*\).*/\1/')/releases/tag/$tag"
+}
+
+generate_preview_notes() {
+    local preview_version=$1
+    local branch_name=$2
+    local base_version=$(cat VERSION)
+    
+    echo "📋 Generating preview release notes..."
+    
+    # Start release notes
+    echo "# 🔥 WhisperRecorder Preview $preview_version" > release_notes.md
+    echo "" >> release_notes.md
+    echo "**⚠️ This is a preview build for testing purposes**" >> release_notes.md
+    echo "" >> release_notes.md
+    echo "- **Base version:** $base_version" >> release_notes.md
+    echo "- **Branch:** \`$branch_name\`" >> release_notes.md
+    echo "- **Build date:** $(date '+%Y-%m-%d %H:%M:%S')" >> release_notes.md
+    echo "" >> release_notes.md
+    
+    # Recent commits since last tag
+    echo "## 🔄 Recent Changes" >> release_notes.md
+    echo "" >> release_notes.md
+    LAST_TAG=$(git describe --tags --abbrev=0 HEAD^ 2>/dev/null || echo "")
+    if [ -n "$LAST_TAG" ]; then
+        echo "### Changes since $LAST_TAG:" >> release_notes.md
+        git log --pretty=format:"- %s (%h)" $LAST_TAG..HEAD >> release_notes.md
+    else
+        echo "### Recent commits:" >> release_notes.md
+        git log --pretty=format:"- %s (%h)" -10 >> release_notes.md
+    fi
+
+    echo "" >> release_notes.md
+    echo "## 🔓 Important Security Notice" >> release_notes.md
+    echo "" >> release_notes.md
+    echo "**If you see \"WhisperRecorder is damaged and can't be opened\":**" >> release_notes.md
+    echo "" >> release_notes.md
+    echo "This happens because the app is not code-signed with Apple Developer ID. Choose one solution:" >> release_notes.md
+    echo "" >> release_notes.md
+    echo "**Option 1 - Terminal command:**" >> release_notes.md
+    echo "\`\`\`bash" >> release_notes.md
+    echo "xattr -d com.apple.quarantine /Applications/WhisperRecorder.app" >> release_notes.md
+    echo "\`\`\`" >> release_notes.md
+    echo "" >> release_notes.md
+    echo "**Option 2 - Right-click method:**" >> release_notes.md
+    echo "- Right-click WhisperRecorder.app → \"Open\"" >> release_notes.md
+    echo "- Click \"Open\" in the security dialog" >> release_notes.md
+    echo "" >> release_notes.md
+    echo "## 📦 Installation" >> release_notes.md
+    echo "" >> release_notes.md
+    echo "1. Download \`WhisperRecorder-$preview_version-macOS-arm64.zip\`" >> release_notes.md
+    echo "2. Unzip and move \`WhisperRecorder.app\` to Applications folder" >> release_notes.md
+    echo "3. **If blocked by macOS:** Use one of the methods above ☝️" >> release_notes.md
+    echo "" >> release_notes.md
+    echo "## ⚠️ Preview Build Notes" >> release_notes.md
+    echo "" >> release_notes.md
+    echo "- This is a **development build** from branch \`$branch_name\`" >> release_notes.md
+    echo "- May contain **experimental features** or **bugs**" >> release_notes.md
+    echo "- **Not recommended** for production use" >> release_notes.md
+    echo "- For stable releases, use the [latest release](https://github.com/$(git config --get remote.origin.url | sed 's/.*github.com[:/]\([^.]*\).*/\1/')/releases/latest)" >> release_notes.md
+    
+    echo "✅ Preview release notes generated: release_notes.md"
+}
+
+create_preview_github_release() {
+    local preview_version=$1
+    local tag=$2
+    local zip_file=$3
+    
+    # Check if GitHub CLI is installed
+    if ! command -v gh &> /dev/null; then
+        echo "❌ GitHub CLI (gh) not found. Install with: brew install gh"
+        echo "   Or upload manually: https://github.com/$(git config --get remote.origin.url | sed 's/.*github.com[:/]\([^.]*\).*/\1/')/releases/new?tag=$tag"
+        return 1
+    fi
+    
+    # Check if authenticated
+    if ! gh auth status &> /dev/null; then
+        echo "❌ Not authenticated with GitHub. Run: gh auth login"
+        return 1
+    fi
+    
+    # Check if ZIP file exists
+    if [ ! -f "$zip_file" ]; then
+        echo "❌ Preview ZIP not found: $zip_file"
+        return 1
+    fi
+    
+    echo "🔥 Creating GitHub preview release..."
+    
+    # Create preview release with ZIP attachment
+    gh release create "$tag" "$zip_file" \
+        --title "🔥 WhisperRecorder Preview $preview_version" \
+        --notes-file release_notes.md \
+        --prerelease
+    
+    if [ $? -eq 0 ]; then
+        echo "✅ GitHub preview release created successfully!"
+        echo "🌐 View: https://github.com/$(git config --get remote.origin.url | sed 's/.*github.com[:/]\([^.]*\).*/\1/')/releases/tag/$tag"
+    else
+        echo "❌ Failed to create GitHub preview release"
+        return 1
+    fi
+}
+
 simple_tag_release() {
     local version=$(cat VERSION)
     local tag="v$version"
@@ -485,6 +677,9 @@ case ${1:-help} in
                     ;;
             esac
         fi
+        ;;
+    preview)
+        preview_build_workflow
         ;;
     help|--help|-h)
         show_help
