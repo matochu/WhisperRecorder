@@ -43,7 +43,7 @@ jobs:
         id: version
         run: |
           cd WhisperRecorder
-          
+
           if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
             # Get current version from VERSION file
             if [ -f "VERSION" ]; then
@@ -110,10 +110,10 @@ jobs:
         run: |
           cd WhisperRecorder
           VERSION="${{ steps.version.outputs.BASE_VERSION }}"
-          
+
           # Update version in VERSION file
           echo "$VERSION" > VERSION
-          
+
           # Create app icon
           if [ -f "create_icon.sh" ]; then
             ./create_icon.sh
@@ -146,11 +146,11 @@ jobs:
           cd WhisperRecorder
           VERSION="${{ steps.version.outputs.VERSION }}"
           BASE_VERSION="${{ steps.version.outputs.BASE_VERSION }}"
-          
+
           # Start release notes
           echo "# WhisperRecorder v$VERSION" > release_notes.md
           echo "" >> release_notes.md
-          
+
           # Extract changes from CHANGELOG.md if it exists
           if [ -f "../CHANGELOG.md" ]; then
             echo "## What's New" >> release_notes.md
@@ -224,24 +224,28 @@ jobs:
         run: |
           VERSION="${{ steps.version.outputs.BASE_VERSION }}"
           DATE=$(date +%Y-%m-%d)
-          
+
           if [ -f "CHANGELOG.md" ]; then
             # Replace [Unreleased] with the new version
             sed -i.bak "s/## \[Unreleased\]/## [$VERSION] - $DATE/" "CHANGELOG.md"
             
             # Add new Unreleased section at the top
-            sed -i.bak "/## \[$VERSION\]/i\\
-## [Unreleased]\\
-\\
-### Added\\
-\\
-### Fixed\\
-\\
-### Changed\\
-\\
-" "CHANGELOG.md"
+            # Create temp file with new unreleased section
+            echo "## [Unreleased]" > temp_unreleased.md
+            echo "" >> temp_unreleased.md
+            echo "### Added" >> temp_unreleased.md
+            echo "" >> temp_unreleased.md
+            echo "### Fixed" >> temp_unreleased.md
+            echo "" >> temp_unreleased.md
+            echo "### Changed" >> temp_unreleased.md
+            echo "" >> temp_unreleased.md
             
-            rm "CHANGELOG.md.bak"
+            # Insert before the current version line
+            sed "/## \[$VERSION\]/r temp_unreleased.md" "CHANGELOG.md" > "CHANGELOG_new.md"
+            mv "CHANGELOG_new.md" "CHANGELOG.md"
+            rm temp_unreleased.md
+            
+
             
             # Commit updated CHANGELOG
             git config --local user.email "action@github.com"
