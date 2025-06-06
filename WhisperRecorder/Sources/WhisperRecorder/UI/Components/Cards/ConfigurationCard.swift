@@ -59,6 +59,23 @@ struct ConfigurationCard: View {
     @State private var lastMenuInteraction = Date()
     @State private var uiStateDebug = "normal"
     
+    // Cross-panel state management
+    @State private var isHistoryExpanded = false
+    
+    private func openSettings(_ type: SettingsType) {
+        // Close history when opening settings
+        isHistoryExpanded = false
+        settingsType = settingsType == type ? nil : type
+    }
+    
+    func onHistoryToggle(isOpen: Bool) {
+        isHistoryExpanded = isOpen
+        // Close settings when opening history
+        if isOpen {
+            settingsType = nil
+        }
+    }
+    
     // Settings panel types
     enum SettingsType {
         case models
@@ -209,7 +226,7 @@ struct ConfigurationCard: View {
                             
                             Button(action: {
                                 if !isActiveOperation {
-                                    settingsType = settingsType == .models ? nil : .models
+                                    openSettings(.models)
                                 }
                             }) {
                                 Image(systemName: "gear")
@@ -231,7 +248,7 @@ struct ConfigurationCard: View {
                         HStack(spacing: 4) {
                             Button(action: {
                                 if !isActiveOperation {
-                                    settingsType = settingsType == .api ? nil : .api
+                                    openSettings(.api)
                                 }
                             }) {
                                 HStack(spacing: 4) {
@@ -260,7 +277,7 @@ struct ConfigurationCard: View {
                             
                             Button(action: {
                                 if !isActiveOperation {
-                                    settingsType = settingsType == .api ? nil : .api
+                                    openSettings(.api)
                                 }
                             }) {
                                 Image(systemName: "gear")
@@ -380,12 +397,16 @@ struct ConfigurationCard: View {
                         HStack(spacing: 4) {
                             Button(action: {
                                 if !isActiveOperation {
-                                    let newConfig = SpeakerDiarizationConfig(
-                                        enabled: !speakerEngine.config.enabled,
-                                        speakerCount: speakerEngine.config.speakerCount,
-                                        sensitivity: speakerEngine.config.sensitivity,
-                                        minimumSegmentDuration: speakerEngine.config.minimumSegmentDuration
-                                    )
+                                                                    let newConfig = SpeakerDiarizationConfig(
+                                    enabled: !speakerEngine.config.enabled,
+                                    speakerCount: speakerEngine.config.speakerCount,
+                                    sensitivity: speakerEngine.config.sensitivity,
+                                    minimumSegmentDuration: speakerEngine.config.minimumSegmentDuration,
+                                    beamSize: speakerEngine.config.beamSize,
+                                    languagePerSpeaker: speakerEngine.config.languagePerSpeaker,
+                                    optimizeForGPU: speakerEngine.config.optimizeForGPU,
+                                    audioFormat: speakerEngine.config.audioFormat
+                                )
                                     speakerEngine.updateConfiguration(newConfig)
                                 }
                             }) {
@@ -406,7 +427,7 @@ struct ConfigurationCard: View {
                             
                             Button(action: {
                                 if !isActiveOperation {
-                                    settingsType = settingsType == .speakers ? nil : .speakers
+                                    openSettings(.speakers)
                                 }
                             }) {
                                 Image(systemName: "gear")
@@ -419,6 +440,8 @@ struct ConfigurationCard: View {
                         }
                     )
                 )
+                
+
                 
                 // Universal settings panel - only allow if not active operation
                 if let settingsType = settingsType, !isActiveOperation {
@@ -442,8 +465,8 @@ struct ConfigurationCard: View {
                 }
             }
         }
-        .opacity(isActiveOperation ? 0.6 : 1.0) // Dim entire card during active operations
         .cardStyle()
+        .opacity(isActiveOperation ? 0.6 : 1.0) // Dim entire card during active operations
         .onAppear {
             // Set correct model index when view appears
             updateModelCache()
@@ -643,17 +666,143 @@ struct ConfigurationCard: View {
     }
     
     private var speakerSettingsView: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            speakerSettingsHeader
-            speakerMainToggle
+        VStack(alignment: .leading, spacing: 6) {
+            Text("Speaker Detection")
+                .font(.system(size: 11, weight: .medium))
+                .foregroundColor(.secondary)
+            
+            // Compact toggle
+            HStack {
+                Toggle("Enable", isOn: Binding(
+                    get: { speakerEngine.config.enabled },
+                    set: { enabled in
+                        let newConfig = SpeakerDiarizationConfig(
+                            enabled: enabled,
+                            speakerCount: speakerEngine.config.speakerCount,
+                            sensitivity: speakerEngine.config.sensitivity,
+                            minimumSegmentDuration: speakerEngine.config.minimumSegmentDuration,
+                            beamSize: speakerEngine.config.beamSize,
+                            languagePerSpeaker: speakerEngine.config.languagePerSpeaker,
+                            optimizeForGPU: speakerEngine.config.optimizeForGPU,
+                            audioFormat: speakerEngine.config.audioFormat
+                        )
+                        speakerEngine.updateConfiguration(newConfig)
+                    }
+                ))
+                .toggleStyle(SwitchToggleStyle())
+                .font(.system(size: 10))
+            }
             
             if speakerEngine.config.enabled {
-                Divider().padding(.vertical, 4)
-                speakerCountSelection
-                Divider().padding(.vertical, 4)
-                speakerSensitivitySlider
-                Divider().padding(.vertical, 4)
-                speakerDurationSlider
+                // Compact speaker count
+                HStack {
+                    Text("Speakers:")
+                        .font(.system(size: 10))
+                        .foregroundColor(.secondary)
+                        .frame(width: 60, alignment: .leading)
+                    
+                    HStack(spacing: 4) {
+                        ForEach(SpeakerCount.allCases.prefix(6), id: \.self) { count in
+                            Button(count.shortName) {
+                                let newConfig = SpeakerDiarizationConfig(
+                                    enabled: speakerEngine.config.enabled,
+                                    speakerCount: count,
+                                    sensitivity: speakerEngine.config.sensitivity,
+                                    minimumSegmentDuration: speakerEngine.config.minimumSegmentDuration,
+                                    beamSize: speakerEngine.config.beamSize,
+                                    languagePerSpeaker: speakerEngine.config.languagePerSpeaker,
+                                    optimizeForGPU: speakerEngine.config.optimizeForGPU,
+                                    audioFormat: speakerEngine.config.audioFormat
+                                )
+                                speakerEngine.updateConfiguration(newConfig)
+                            }
+                            .buttonStyle(PlainButtonStyle())
+                            .font(.system(size: 9))
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 2)
+                            .background(
+                                speakerEngine.config.speakerCount == count ? 
+                                Color.blue : Color(.controlBackgroundColor)
+                            )
+                            .foregroundColor(
+                                speakerEngine.config.speakerCount == count ? 
+                                .white : .primary
+                            )
+                            .cornerRadius(3)
+                        }
+                    }
+                }
+                
+                // Compact sliders
+                VStack(spacing: 3) {
+                    HStack {
+                        Text("Sensitivity:")
+                            .font(.system(size: 10))
+                            .foregroundColor(.secondary)
+                            .frame(width: 60, alignment: .leading)
+                        
+                        Slider(
+                            value: Binding(
+                                get: { speakerEngine.config.sensitivity },
+                                set: { sensitivity in
+                                    let newConfig = SpeakerDiarizationConfig(
+                                        enabled: speakerEngine.config.enabled,
+                                        speakerCount: speakerEngine.config.speakerCount,
+                                        sensitivity: sensitivity,
+                                        minimumSegmentDuration: speakerEngine.config.minimumSegmentDuration,
+                                        beamSize: speakerEngine.config.beamSize,
+                                        languagePerSpeaker: speakerEngine.config.languagePerSpeaker,
+                                        optimizeForGPU: speakerEngine.config.optimizeForGPU,
+                                        audioFormat: speakerEngine.config.audioFormat
+                                    )
+                                    speakerEngine.updateConfiguration(newConfig)
+                                }
+                            ),
+                            in: 0.1...1.0,
+                            step: 0.1
+                        )
+                        .accentColor(.blue)
+                        
+                        Text(String(format: "%.1f", speakerEngine.config.sensitivity))
+                            .font(.system(size: 9))
+                            .foregroundColor(.secondary)
+                            .frame(width: 25)
+                    }
+                    
+                    HStack {
+                        Text("Duration:")
+                            .font(.system(size: 10))
+                            .foregroundColor(.secondary)
+                            .frame(width: 60, alignment: .leading)
+                        
+                        Slider(
+                            value: Binding(
+                                get: { speakerEngine.config.minimumSegmentDuration },
+                                set: { duration in
+                                    let newConfig = SpeakerDiarizationConfig(
+                                        enabled: speakerEngine.config.enabled,
+                                        speakerCount: speakerEngine.config.speakerCount,
+                                        sensitivity: speakerEngine.config.sensitivity,
+                                        minimumSegmentDuration: duration,
+                                        beamSize: speakerEngine.config.beamSize,
+                                        languagePerSpeaker: speakerEngine.config.languagePerSpeaker,
+                                        optimizeForGPU: speakerEngine.config.optimizeForGPU,
+                                        audioFormat: speakerEngine.config.audioFormat
+                                    )
+                                    speakerEngine.updateConfiguration(newConfig)
+                                }
+                            ),
+                            in: 0.5...5.0,
+                            step: 0.5
+                        )
+                        .accentColor(.blue)
+                        
+                        Text("\(String(format: "%.1f", speakerEngine.config.minimumSegmentDuration))s")
+                            .font(.system(size: 9))
+                            .foregroundColor(.secondary)
+                            .frame(width: 25)
+                    }
+                }
             }
         }
     }
@@ -679,7 +828,11 @@ struct ConfigurationCard: View {
                             enabled: enabled,
                             speakerCount: speakerEngine.config.speakerCount,
                             sensitivity: speakerEngine.config.sensitivity,
-                            minimumSegmentDuration: speakerEngine.config.minimumSegmentDuration
+                            minimumSegmentDuration: speakerEngine.config.minimumSegmentDuration,
+                            beamSize: speakerEngine.config.beamSize,
+                            languagePerSpeaker: speakerEngine.config.languagePerSpeaker,
+                            optimizeForGPU: speakerEngine.config.optimizeForGPU,
+                            audioFormat: speakerEngine.config.audioFormat
                         )
                         speakerEngine.updateConfiguration(newConfig)
                     }
@@ -719,7 +872,11 @@ struct ConfigurationCard: View {
                 enabled: speakerEngine.config.enabled,
                 speakerCount: count,
                 sensitivity: speakerEngine.config.sensitivity,
-                minimumSegmentDuration: speakerEngine.config.minimumSegmentDuration
+                minimumSegmentDuration: speakerEngine.config.minimumSegmentDuration,
+                beamSize: speakerEngine.config.beamSize,
+                languagePerSpeaker: speakerEngine.config.languagePerSpeaker,
+                optimizeForGPU: speakerEngine.config.optimizeForGPU,
+                audioFormat: speakerEngine.config.audioFormat
             )
             speakerEngine.updateConfiguration(newConfig)
         }) {
@@ -761,7 +918,11 @@ struct ConfigurationCard: View {
                             enabled: speakerEngine.config.enabled,
                             speakerCount: speakerEngine.config.speakerCount,
                             sensitivity: sensitivity,
-                            minimumSegmentDuration: speakerEngine.config.minimumSegmentDuration
+                            minimumSegmentDuration: speakerEngine.config.minimumSegmentDuration,
+                            beamSize: speakerEngine.config.beamSize,
+                            languagePerSpeaker: speakerEngine.config.languagePerSpeaker,
+                            optimizeForGPU: speakerEngine.config.optimizeForGPU,
+                            audioFormat: speakerEngine.config.audioFormat
                         )
                         speakerEngine.updateConfiguration(newConfig)
                     }
@@ -811,7 +972,11 @@ struct ConfigurationCard: View {
                             enabled: speakerEngine.config.enabled,
                             speakerCount: speakerEngine.config.speakerCount,
                             sensitivity: speakerEngine.config.sensitivity,
-                            minimumSegmentDuration: duration
+                            minimumSegmentDuration: duration,
+                            beamSize: speakerEngine.config.beamSize,
+                            languagePerSpeaker: speakerEngine.config.languagePerSpeaker,
+                            optimizeForGPU: speakerEngine.config.optimizeForGPU,
+                            audioFormat: speakerEngine.config.audioFormat
                         )
                         speakerEngine.updateConfiguration(newConfig)
                     }
@@ -1055,4 +1220,25 @@ struct ConfigurationCard: View {
             selectedModelIndex = 0  // Fallback to first model if current not found
         }
     }
-} 
+    
+    // MARK: - Quality Test View (inspired by whispy)
+    private var qualityTestView: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("Quality Testing (whispy-inspired)")
+                .font(.system(size: 11, weight: .medium))
+                .foregroundColor(.secondary)
+            
+            Text("Coming soon... Test different configurations")
+                .font(.system(size: 10))
+                .foregroundColor(.secondary)
+        }
+    }
+    
+    private func startQualityTest() {
+        // TODO: Implement quality test
+    }
+    
+    private func showQualityTestDetails() {
+        // TODO: Show test details
+    }
+}

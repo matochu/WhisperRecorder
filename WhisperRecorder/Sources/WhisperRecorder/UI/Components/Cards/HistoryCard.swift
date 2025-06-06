@@ -8,6 +8,8 @@ struct HistoryCard: View {
     @State private var selectedItem: TranscriptionHistoryItem?
     @State private var showingClearConfirmation = false
     
+    var onToggle: ((Bool) -> Void)? = nil
+    
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             historyHeader
@@ -67,6 +69,7 @@ struct HistoryCard: View {
             Button(action: {
                 withAnimation(.easeInOut(duration: 0.2)) {
                     isExpanded.toggle()
+                    onToggle?(isExpanded)
                 }
             }) {
                 Image(systemName: isExpanded ? "chevron.up" : "chevron.down")
@@ -245,6 +248,7 @@ struct HistoryItemView: View {
                         .font(.system(size: 11))
                         .foregroundColor(.primary)
                         .lineLimit(isSelected ? nil : 2)
+                        .help(item.originalText.count > 100 ? item.originalText : "")
                 }
                 
                 Spacer()
@@ -261,32 +265,23 @@ struct HistoryItemView: View {
                 Divider()
                     .padding(.vertical, 2)
                 
-                // Action buttons
-                HStack(spacing: 6) {
-                    copyButton("📋", "Copy", .display)
+                // Action icons with tooltips
+                HStack(spacing: 8) {
+                    iconButton("doc.on.clipboard", "Copy display text", { onCopy(.display) })
                     
                     if item.hasProcessedText {
-                        copyButton("🔄", "Processed", .processed)
+                        iconButton("arrow.triangle.2.circlepath", "Copy processed text", { onCopy(.processed) })
                     }
                     
-                    copyButton("📄", "Original", .original)
+                    iconButton("doc.text", "Copy original text", { onCopy(.original) })
                     
                     if item.hasLLMText {
-                        copyButton("🤖", "LLM", .llm)
+                        iconButton("brain", "Copy LLM formatted text", { onCopy(.llm) })
                     }
                     
                     Spacer()
                     
-                    Button(action: onDelete) {
-                        HStack(spacing: 2) {
-                            Image(systemName: "trash")
-                                .font(.system(size: 9))
-                            Text("Delete")
-                                .font(.system(size: 10))
-                        }
-                        .foregroundColor(.red)
-                    }
-                    .buttonStyle(PlainButtonStyle())
+                    iconButton("trash", "Delete this item", onDelete, color: .red)
                 }
                 
                 // Metadata
@@ -306,20 +301,39 @@ struct HistoryItemView: View {
         }
     }
     
-    private func copyButton(_ icon: String, _ title: String, _ type: HistoryItemCopyType) -> some View {
-        Button(action: { onCopy(type) }) {
-            HStack(spacing: 2) {
-                Text(icon)
-                    .font(.system(size: 9))
-                Text(title)
-                    .font(.system(size: 10))
-            }
-            .padding(.horizontal, 6)
-            .padding(.vertical, 3)
-            .background(Color(.controlBackgroundColor))
-            .cornerRadius(3)
+    private func iconButton(_ systemName: String, _ tooltip: String, _ action: @escaping () -> Void, color: Color = .secondary) -> some View {
+        IconButtonView(systemName: systemName, tooltip: tooltip, action: action, color: color)
+    }
+}
+
+// MARK: - Icon Button with Hover Effect
+struct IconButtonView: View {
+    let systemName: String
+    let tooltip: String
+    let action: () -> Void
+    let color: Color
+    
+    @State private var isHovered = false
+    
+    var body: some View {
+        Button(action: action) {
+            Image(systemName: systemName)
+                .font(.system(size: 11))
+                .foregroundColor(isHovered ? .primary : color)
+                .frame(width: 20, height: 20)
+                .background(
+                    RoundedRectangle(cornerRadius: 4)
+                        .fill(isHovered ? Color(.controlBackgroundColor) : Color.clear)
+                        .animation(.easeInOut(duration: 0.15), value: isHovered)
+                )
         }
         .buttonStyle(PlainButtonStyle())
+        .help(tooltip)
+        .onHover { hovering in
+            isHovered = hovering
+        }
+        .scaleEffect(isHovered ? 1.1 : 1.0)
+        .animation(.easeInOut(duration: 0.15), value: isHovered)
     }
 }
 

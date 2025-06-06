@@ -96,7 +96,12 @@ struct PopoverView: View {
                 inputText: $inputText
             )
             
-            HistoryCard()
+                            HistoryCard(onToggle: { isOpen in
+                    // Close settings when opening history
+                    if isOpen {
+                        // We'll pass settings state through environment
+                    }
+                })
             
             SystemCard()
         }

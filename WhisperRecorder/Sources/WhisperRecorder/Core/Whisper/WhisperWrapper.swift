@@ -26,6 +26,11 @@ class WhisperWrapper {
     private var wrapper: OpaquePointer?
     public var currentModel: WhisperModel
     public var useLanguageDetection: Bool = true
+    
+    // New quality parameters inspired by whispy
+    public var beamSearchSize: Int = 5      // Beam search for better quality
+    public var temperature: Float = 0.0     // Temperature for sampling
+    public var segmentWiseProcessing: Bool = false  // Process by segments for better quality
 
     // Available models from download-ggml-model.sh
     static let availableModels: [WhisperModel] = [
@@ -299,7 +304,16 @@ class WhisperWrapper {
         return wrapper != nil && whisper_wrapper_is_loaded(wrapper)
     }
 
-    func transcribe(audioFile: URL) -> String {
+    func transcribe(audioFile: URL, completion: @escaping (Result<String, Error>) -> Void) {
+        DispatchQueue.global(qos: .userInitiated).async {
+            let result = self.transcribeSync(audioFile: audioFile)
+            DispatchQueue.main.async {
+                completion(.success(result))
+            }
+        }
+    }
+    
+    func transcribeSync(audioFile: URL) -> String {
         logInfo(.whisper, "Transcribe called for audio file: \(audioFile.path)")
 
         guard let wrapper = wrapper else {
@@ -419,7 +433,7 @@ class WhisperWrapper {
         }
 
         // Transcribe the temporary file
-        let transcription = transcribe(audioFile: tempURL)
+        let transcription = transcribeSync(audioFile: tempURL)
 
         // Clean up the temporary file
         try? FileManager.default.removeItem(at: tempURL)

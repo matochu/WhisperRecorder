@@ -45,12 +45,36 @@ struct SpeakerDiarizationConfig {
     let sensitivity: Float
     let minimumSegmentDuration: TimeInterval
     
+    // New hyperparameters inspired by whispy
+    let beamSize: Int              // For better diarization quality
+    let languagePerSpeaker: Bool   // Detect language per speaker
+    let optimizeForGPU: Bool       // GPU optimization toggle
+    let audioFormat: AudioFormat   // Test different formats performance
+    
     static let `default` = SpeakerDiarizationConfig(
         enabled: false,
         speakerCount: .autoDetect,
         sensitivity: 0.5,
-        minimumSegmentDuration: 1.0
+        minimumSegmentDuration: 1.0,
+        beamSize: 5,
+        languagePerSpeaker: false,
+        optimizeForGPU: true,
+        audioFormat: .wav
     )
+}
+
+enum AudioFormat: String, CaseIterable, Codable {
+    case wav = "wav"
+    case m4a = "m4a" 
+    case mp3 = "mp3"
+    
+    var displayName: String {
+        switch self {
+        case .wav: return "WAV (best quality)"
+        case .m4a: return "M4A (balanced)"
+        case .mp3: return "MP3 (smallest size)"
+        }
+    }
 }
 
 enum SpeakerCount: CaseIterable, Codable, Equatable, Hashable {
@@ -63,6 +87,15 @@ enum SpeakerCount: CaseIterable, Codable, Equatable, Hashable {
             return "Auto-detect"
         case .speakers(let count):
             return "\(count) speakers"
+        }
+    }
+    
+    var shortName: String {
+        switch self {
+        case .autoDetect:
+            return "Auto"
+        case .speakers(let count):
+            return "\(count)"
         }
     }
     
@@ -109,7 +142,11 @@ class SpeakerDiarizationEngine: ObservableObject {
             enabled: defaults.bool(forKey: "speakerDiarizationEnabled"),
             speakerCount: loadSpeakerCount(),
             sensitivity: defaults.object(forKey: "speakerDiarizationSensitivity") as? Float ?? 0.5,
-            minimumSegmentDuration: defaults.object(forKey: "speakerMinimumSegmentDuration") as? TimeInterval ?? 1.0
+            minimumSegmentDuration: defaults.object(forKey: "speakerMinimumSegmentDuration") as? TimeInterval ?? 1.0,
+            beamSize: defaults.object(forKey: "speakerBeamSize") as? Int ?? 5,
+            languagePerSpeaker: defaults.bool(forKey: "speakerLanguagePerSpeaker"),
+            optimizeForGPU: defaults.bool(forKey: "speakerOptimizeForGPU"),
+            audioFormat: loadAudioFormat()
         )
         
         logInfo(.audio, "Loaded speaker diarization config: enabled=\(config.enabled), count=\(config.speakerCount.displayName)")
@@ -126,6 +163,17 @@ class SpeakerDiarizationEngine: ObservableObject {
         return .autoDetect
     }
     
+    private func loadAudioFormat() -> AudioFormat {
+        let defaults = UserDefaults.standard
+        
+        if let formatString = defaults.string(forKey: "speakerAudioFormat"),
+           let format = AudioFormat(rawValue: formatString) {
+            return format
+        }
+        
+        return .wav
+    }
+    
     func updateConfiguration(_ newConfig: SpeakerDiarizationConfig) {
         config = newConfig
         saveConfiguration()
@@ -139,6 +187,10 @@ class SpeakerDiarizationEngine: ObservableObject {
         defaults.set(config.enabled, forKey: "speakerDiarizationEnabled")
         defaults.set(config.sensitivity, forKey: "speakerDiarizationSensitivity")
         defaults.set(config.minimumSegmentDuration, forKey: "speakerMinimumSegmentDuration")
+        defaults.set(config.beamSize, forKey: "speakerBeamSize")
+        defaults.set(config.languagePerSpeaker, forKey: "speakerLanguagePerSpeaker")
+        defaults.set(config.optimizeForGPU, forKey: "speakerOptimizeForGPU")
+        defaults.set(config.audioFormat.rawValue, forKey: "speakerAudioFormat")
         
         if let data = try? JSONEncoder().encode(config.speakerCount) {
             defaults.set(data, forKey: "speakerCount")
