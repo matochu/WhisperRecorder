@@ -347,6 +347,16 @@ github_publish_workflow() {
         exit 1
     fi
     
+    # Set default repository if not set
+    if ! gh repo set-default --view &> /dev/null; then
+        echo "🔧 Setting default repository..."
+        gh repo set-default origin
+        if [ $? -ne 0 ]; then
+            echo "❌ Failed to set default repository. Run manually: gh repo set-default"
+            exit 1
+        fi
+    fi
+    
     echo "✅ GitHub CLI ready"
     
     # Check if working directory is clean
@@ -463,6 +473,16 @@ preview_build_workflow() {
     if ! gh auth status &> /dev/null; then
         echo "❌ Not authenticated with GitHub. Run: gh auth login"
         exit 1
+    fi
+    
+    # Set default repository if not set
+    if ! gh repo set-default --view &> /dev/null; then
+        echo "🔧 Setting default repository..."
+        gh repo set-default origin
+        if [ $? -ne 0 ]; then
+            echo "❌ Failed to set default repository. Run manually: gh repo set-default"
+            exit 1
+        fi
     fi
     
     echo "✅ GitHub CLI ready"
