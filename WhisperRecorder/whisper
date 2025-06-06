@@ -519,6 +519,10 @@ case "${1:-help}" in
             ./version.sh bump "$3"
         elif [ "$2" = "release" ]; then
             ./version.sh release
+        elif [ "$2" = "publish" ] && [ -n "$3" ]; then
+            ./version.sh publish "$3"
+        elif [ "$2" = "tag-release" ]; then
+            ./version.sh tag-release
         else
             ./version.sh current
         fi
