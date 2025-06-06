@@ -333,6 +333,22 @@ github_publish_workflow() {
     echo "============================================="
     echo "🔵 Current version: $start_version"
     
+    # Check GitHub CLI requirements first (before build)
+    echo ""
+    echo "🔍 Checking GitHub CLI requirements..."
+    
+    if ! command -v gh &> /dev/null; then
+        echo "❌ GitHub CLI (gh) not found. Install with: brew install gh"
+        exit 1
+    fi
+    
+    if ! gh auth status &> /dev/null; then
+        echo "❌ Not authenticated with GitHub. Run: gh auth login"
+        exit 1
+    fi
+    
+    echo "✅ GitHub CLI ready"
+    
     # Check if working directory is clean
     if ! git diff-index --quiet HEAD --; then
         echo "❌ Working directory not clean. Commit changes first."
@@ -420,15 +436,36 @@ github_publish_workflow() {
 
 preview_build_workflow() {
     local base_version=$(cat VERSION)
-    local date_stamp=$(date +%Y%m%d-%H%M)
-    local preview_version="$base_version-preview-$date_stamp"
     local branch_name=$(git rev-parse --abbrev-ref HEAD)
+    local commit_hash=$(git rev-parse --short HEAD)
+    
+    # Clean branch name (remove special characters)
+    local clean_branch=$(echo "$branch_name" | sed 's/[^a-zA-Z0-9-]/-/g' | sed 's/--*/-/g')
+    
+    # Create preview version: base_version-branch-commit (like GitHub workflow)
+    local preview_version="$base_version-$clean_branch-$commit_hash"
     
     echo "🔥 Starting Preview Build workflow"
     echo "================================="
     echo "🔵 Base version: $base_version"
     echo "🔥 Preview version: $preview_version"
     echo "🌿 Branch: $branch_name"
+    
+    # Check GitHub CLI requirements first (before build)
+    echo ""
+    echo "🔍 Checking GitHub CLI requirements..."
+    
+    if ! command -v gh &> /dev/null; then
+        echo "❌ GitHub CLI (gh) not found. Install with: brew install gh"
+        exit 1
+    fi
+    
+    if ! gh auth status &> /dev/null; then
+        echo "❌ Not authenticated with GitHub. Run: gh auth login"
+        exit 1
+    fi
+    
+    echo "✅ GitHub CLI ready"
     
     # Check if working directory is clean
     if ! git diff-index --quiet HEAD --; then
@@ -472,7 +509,7 @@ preview_build_workflow() {
     # Step 5: Create tag
     echo ""
     echo "🏷️  Step 5/6: Creating preview tag..."
-    local tag="preview-$preview_version"
+    local tag="v$preview_version"
     
     if git tag -l | grep -q "^$tag$"; then
         echo "❌ Tag $tag already exists"

@@ -61,4 +61,4 @@ local.properties
 
 .cursor/
 *.code-workspace
-WhisperRecorder/WhisperRecorder.zip
+WhisperRecorder*.zip
