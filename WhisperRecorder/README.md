@@ -45,6 +45,19 @@ cd WhisperRecorder
 ./whisper version publish minor # Local build + GitHub release + version bump
 ./whisper version tag-release   # Tag + push (triggers GitHub Action)
 
+# 🧪 Testing Commands (New!)
+./whisper test            # Interactive test selection menu
+./whisper test quick      # E2E simulated tests (~21s)
+./whisper test real       # Real audio with Whisper model
+./whisper test performance # Performance benchmarks (~5s)
+./whisper test ui         # UI Integration tests (~1s)
+./whisper test ui-e2e     # UI Component E2E tests (~0.3s)
+./whisper test ui-full    # Complete UI test suite (~1.5s)
+./whisper test all        # All available tests
+
+# 🔗 Development Setup
+../scripts/setup-git-hooks.sh  # Install pre-commit testing hooks
+
 # 🔧 Utility Commands
 ./whisper help            # Show all available commands
 ```
@@ -177,6 +190,70 @@ WhisperRecorder now includes automated GitHub release workflow:
 - ✅ Safe build environment with process monitoring
 
 See documentation in `../docs/` for detailed development information.
+
+## 🧪 Testing Infrastructure
+
+WhisperRecorder includes a comprehensive testing suite for quality assurance and regression prevention:
+
+### Test Categories
+
+#### 🏃‍♂️ Development Tests (Fast)
+
+- **quick** - E2E simulated tests (~21s) - Complete flow without Whisper model
+- **ui** - UI Integration tests (~1s) - Component integration validation (12 tests)
+- **ui-e2e** - UI Component E2E tests (~0.3s) - Real UI behavior testing (9 tests)
+
+#### 🎯 Validation Tests (Real)
+
+- **real** - Real Whisper model testing with actual .wav files
+- **performance** - Performance benchmarks (~5s) - Memory and speed metrics
+- **ui-full** - Complete UI test suite (~1.5s) - All UI tests combined (21 tests)
+
+#### 🚀 Complete Testing
+
+- **all** - Complete test suite - All categories combined
+
+### What Each Category Tests
+
+- **🏃‍♂️ Quick Tests**: Transcription flow, error recovery, state transitions (no model required)
+- **🎨 UI Tests**: Toast system, clipboard operations, component integration (100% success)
+- **🎯 Real Audio**: Whisper model accuracy with known transcription validation
+- **⚡ Performance**: Memory tracking (~7.4MB peak), processing speed, resource cleanup
+
+### Interactive Testing
+
+```bash
+# Interactive test selection
+./whisper test              # Shows organized menu with all options
+
+# Quick development tests
+./whisper test quick        # Fast E2E feedback (~21s)
+./whisper test ui           # UI component validation (~1s)
+
+# Complete validation
+./whisper test ui-full      # All UI tests (21 tests, ~1.5s)
+./whisper test all          # Complete test suite
+
+# Pre-commit testing (automatic)
+git commit                  # Triggers pre-commit hook with quick tests
+```
+
+### CI/CD Integration
+
+- **GitHub Actions**: Automated testing on PR/push
+- **Pre-commit Hooks**: Local testing before commits
+- **Performance Monitoring**: Track speed and memory regressions
+- **Test Coverage**: E2E, UI, Performance, Real Audio validation
+
+### Test Results (Latest)
+
+- ✅ **UI Integration Tests**: 12/12 passed (100% success)
+- ✅ **UI Component E2E Tests**: 9/9 passed (100% success)
+- ✅ **Performance Tests**: ~38K ops/sec (Integration), ~226K ops/sec (E2E)
+- ✅ **Library Management**: Automated libwhisper.1.dylib handling
+- ✅ **Memory Efficiency**: Proper cleanup, no memory leaks
+
+For detailed testing documentation, see [test-suite-overview.md](../docs/contexts/technical/test-suite-overview.md).
 
 ## Whisper Models
 

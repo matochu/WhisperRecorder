@@ -326,5 +326,23 @@ class AudioRecorder: ObservableObject {
         contextualProcessor.processWithClipboardContext()
     }
     
+    // MARK: - Testing Support
+    
+    #if DEBUG
+    /// Test helper to set lastTranscription for testing
+    func setLastTranscriptionForTesting(_ text: String?) {
+        lastTranscription = text
+    }
+    
+    /// Test helper to set isTranscribing for testing
+    func setIsTranscribingForTesting(_ value: Bool) {
+        isTranscribing = value
+    }
+    
+    /// Test helper to get system ready state
+    var isSystemReadyForTesting: Bool {
+        return !isTranscribing && statusDescription == "Ready"
+    }
+    #endif
 
 }

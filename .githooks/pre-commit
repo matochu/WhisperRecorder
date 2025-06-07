@@ -1,0 +1,102 @@
+#!/bin/bash
+
+# WhisperRecorder Pre-commit Hook
+# Runs quick tests before allowing commit
+# Installation: cp .githooks/pre-commit .git/hooks/pre-commit && chmod +x .git/hooks/pre-commit
+
+set -e
+
+# Colors for output
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+BLUE='\033[0;34m'
+NC='\033[0m' # No Color
+
+echo -e "${BLUE}🔍 WhisperRecorder Pre-commit Hook${NC}"
+echo "================================="
+
+# Check if we're in the right directory
+if [ ! -f "whisper" ]; then
+    echo -e "${RED}❌ Error: Must be run from project root directory${NC}"
+    exit 1
+fi
+
+# Check if WhisperRecorder directory exists
+if [ ! -d "WhisperRecorder" ]; then
+    echo -e "${RED}❌ Error: WhisperRecorder directory not found${NC}"
+    exit 1
+fi
+
+# Get list of changed files related to WhisperRecorder
+changed_files=$(git diff --cached --name-only | grep -E "^WhisperRecorder/" || true)
+
+if [ -z "$changed_files" ]; then
+    echo -e "${GREEN}✅ No WhisperRecorder changes detected - skipping tests${NC}"
+    exit 0
+fi
+
+echo -e "${YELLOW}📁 WhisperRecorder changes detected:${NC}"
+echo "$changed_files" | sed 's/^/  • /'
+echo ""
+
+# Check if Swift files were changed
+swift_files=$(echo "$changed_files" | grep -E "\.(swift|h|m)$" || true)
+test_files=$(echo "$changed_files" | grep -E "Tests/.*\.swift$" || true)
+
+if [ -n "$swift_files" ] || [ -n "$test_files" ]; then
+    echo -e "${BLUE}🧪 Running quick tests before commit...${NC}"
+    echo ""
+    
+    cd WhisperRecorder
+    
+    # Check if test script exists
+    if [ ! -f "test-e2e.sh" ]; then
+        echo -e "${RED}❌ Error: test-e2e.sh not found${NC}"
+        echo "Please ensure test infrastructure is properly set up"
+        exit 1
+    fi
+    
+    # Run quick tests with timeout
+    echo -e "${YELLOW}⚡ Running pre-commit tests (max 10 seconds)...${NC}"
+    
+    start_time=$(date +%s)
+    
+    # Run tests with timeout and capture output (macOS compatible)
+    if ./test-e2e.sh pre-commit 2>&1; then
+        end_time=$(date +%s)
+        duration=$((end_time - start_time))
+        
+        echo ""
+        echo -e "${GREEN}✅ All tests passed! (${duration}s)${NC}"
+        echo -e "${BLUE}💡 Your changes are ready to commit${NC}"
+        
+        cd ..
+        exit 0
+    else
+        exit_code=$?
+        end_time=$(date +%s)
+        duration=$((end_time - start_time))
+        
+        echo ""
+        echo -e "${RED}❌ Tests failed! (${duration}s)${NC}"
+        echo -e "${YELLOW}💡 Fix failing tests before committing${NC}"
+        
+        echo ""
+        echo -e "${BLUE}🔧 To debug:${NC}"
+        echo "  cd WhisperRecorder"
+        echo "  ./test-e2e.sh pre-commit    # Run pre-commit tests"
+        echo "  ./test-e2e.sh quick         # Run full quick tests"
+        echo "  ./test-e2e.sh ui            # Run UI tests"
+        echo "  swift test --list-tests     # List all tests"
+        echo ""
+        echo -e "${YELLOW}🚫 To bypass this hook (NOT RECOMMENDED):${NC}"
+        echo "  git commit --no-verify"
+        
+        cd ..
+        exit 1
+    fi
+else
+    echo -e "${GREEN}✅ No Swift/test files changed - skipping tests${NC}"
+    exit 0
+fi 

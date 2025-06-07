@@ -41,8 +41,34 @@ show_help() {
     echo "  version publish <type> GitHub release (bump, build, upload)"
     echo "  version preview   Preview build (no bump, GitHub pre-release)"
     echo ""
-    echo -e "${GREEN}🔧 Utility Commands:${NC}"
+    echo -e "${GREEN}🧪 Testing Commands:${NC}"
+    echo "  test              Run test suites (interactive)"
+    echo "  test quick        Quick E2E tests (~21s)"
+    echo "  test ui           UI Integration tests (~1s)"
+    echo "  test ui-e2e       UI Component E2E tests (~0.3s)"
+    echo "  test ui-full      Complete UI test suite (~1.5s)"
+    echo "  test real         Real audio tests (requires Whisper model)"
+    echo "  test performance  Performance benchmarks (~5s)"
+    echo "  test all          All available tests"
+    echo ""
+    echo -e "${GREEN}🧪 Testing Commands:${NC}"
+    echo "  test              Run test suites (interactive)"
+    echo "  test quick        Quick E2E tests (~21s)"
+    echo -e "${GREEN}� Git Hooks Setup:${NC}"
+    echo "  ../scripts/setup-git-hooks.sh   Install pre-commit testing hooks"
+    echo ""
+    echo "  test ui           UI Integration tests (~1s)"
+    echo "  test ui-e2e       UI Component E2E tests (~0.3s)"
+    echo "  test ui-full      Complete UI test suite (~1.5s)"
+    echo "  test real         Real audio tests (requires Whisper model)"
+    echo "  test performance  Performance benchmarks (~5s)"
+    echo "  test all          All available tests"
+    echo ""
+    echo -e "${GREEN}�🔧 Utility Commands:${NC}"
     echo "  help              Show this help"
+    echo ""
+    echo -e "${GREEN}🔗 Git Hooks Setup:${NC}"
+    echo "  ../scripts/setup-git-hooks.sh   Install pre-commit testing hooks"
     echo ""
     
     if [ -f "VERSION" ]; then
@@ -438,6 +464,107 @@ cmd_icon() {
     fi
 }
 
+# Test command
+cmd_test() {
+    local test_suite="$1"
+    
+    echo -e "${GREEN}🧪 WhisperRecorder Test Suite${NC}"
+    echo "============================="
+    
+    if ! check_processes; then
+        kill_processes || exit 1
+    fi
+    
+    create_lockfile "test"
+    
+    if [ ! -f "test-e2e.sh" ]; then
+        echo -e "${RED}❌ test-e2e.sh not found${NC}"
+        echo "Test script is missing"
+        exit 1
+    fi
+    
+    # Show test info if no parameter provided
+    if [ -z "$test_suite" ]; then
+        echo -e "${BLUE}📋 Available Test Types:${NC}"
+        echo "  1. pre-commit    - Pre-commit tests (~2s) - fastest for commits"
+        echo "  2. quick         - Quick E2E tests (simulated, ~21s)"
+        echo "  3. ui            - UI Integration tests (~1s)" 
+        echo "  4. ui-e2e        - UI Component E2E tests (~0.3s)"
+        echo "  5. ui-full       - Complete UI test suite (~1.5s)"
+        echo "  6. real          - Real audio tests (requires Whisper model)"
+        echo "  7. performance   - Performance benchmarks (~5s)"
+        echo "  8. all           - All available tests"
+        echo ""
+        echo -e "${YELLOW}💡 Quick start: ./whisper test 1${NC} ${BLUE}(or: ./whisper test pre-commit)${NC}"
+        echo -e "${BLUE}ℹ️  For CI/CD setup: ../scripts/setup-git-hooks.sh${NC}"
+        echo ""
+    fi
+    
+    echo "🚀 Starting test suites..."
+    
+    # Convert number to test name if needed
+    case "$test_suite" in
+        1)
+            test_suite="pre-commit"
+            ;;
+        2)
+            test_suite="quick"
+            ;;
+        3)
+            test_suite="ui"
+            ;;
+        4)
+            test_suite="ui-e2e"
+            ;;
+        5)
+            test_suite="ui-full"
+            ;;
+        6)
+            test_suite="real"
+            ;;
+        7)
+            test_suite="performance"
+            ;;
+        8)
+            test_suite="all"
+            ;;
+    esac
+    
+    # Run the test script with optional parameter
+    if [ -n "$test_suite" ]; then
+        ./test-e2e.sh "$test_suite"
+    else
+        ./test-e2e.sh
+    fi
+    
+    test_result=$?
+    
+    if [ $test_result -eq 0 ]; then
+        echo ""
+        echo -e "${GREEN}✅ Test suites completed successfully!${NC}"
+        echo -e "${BLUE}📊 Test Infrastructure Status:${NC}"
+        echo "  • GitHub Actions: Automated testing on PR/push"
+        echo "  • Pre-commit Hook: Local testing before commits"
+        echo "  • Test Coverage: E2E, UI, Performance, Real Audio"
+        echo ""
+        echo -e "${YELLOW}🔗 Useful commands:${NC}"
+        echo "  ./whisper test pre-commit # Ultra-fast commit validation (~2s)"
+        echo "  ./whisper test quick     # Fast development testing (~21s)"
+        echo "  ./whisper test ui-full   # Complete UI validation (~1.5s)"
+        echo "  git commit               # Triggers pre-commit tests"
+    else
+        echo ""
+        echo -e "${RED}❌ Some tests failed!${NC}"
+        echo -e "${YELLOW}💡 Debugging tips:${NC}"
+        echo "  • Check error messages above"
+        echo "  • Run specific test: ./whisper test quick"
+        echo "  • Check test logs in .build directory"
+        echo "  • Ensure dependencies are properly set up"
+    fi
+    
+    return $test_result
+}
+
 # Notarize command
 cmd_notarize() {
     echo -e "${GREEN}🔐 Notarizing WhisperRecorder DMG${NC}"
@@ -512,6 +639,9 @@ case "${1:-help}" in
         ;;
     status)
         cmd_status
+        ;;
+    test)
+        cmd_test "$2"
         ;;
     version)
         if [ "$2" = "set" ] && [ -n "$3" ]; then

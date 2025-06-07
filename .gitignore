@@ -62,3 +62,12 @@ local.properties
 .cursor/
 *.code-workspace
 WhisperRecorder*.zip
+
+# Test audio files - download on demand
+**/TestAudioFiles/*.wav
+**/TestAudioFiles/*.ogg
+**/TestAudioFiles/*.mp3
+**/TestAudioFiles/download_samples.sh
+
+# Test models - download on demand
+**/TestModels/*.bin

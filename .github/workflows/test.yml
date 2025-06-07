@@ -1,0 +1,245 @@
+name: Test Suite
+
+on:
+  push:
+    branches: [main, master, develop]
+    paths:
+      - "WhisperRecorder/**"
+      - ".github/workflows/test.yml"
+  pull_request:
+    branches: [main, master, develop]
+    paths:
+      - "WhisperRecorder/**"
+      - ".github/workflows/test.yml"
+  workflow_dispatch:
+    inputs:
+      test_type:
+        description: "Type of tests to run"
+        required: false
+        default: "quick"
+        type: choice
+        options:
+          - quick
+          - ui
+          - performance
+          - all
+
+env:
+  DEVELOPER_DIR: /Applications/Xcode.app/Contents/Developer
+
+jobs:
+  quick-tests:
+    runs-on: macos-latest
+    if: |
+      github.event_name == 'pull_request' || 
+      (github.event_name == 'push' && contains(github.ref, 'main')) ||
+      (github.event_name == 'workflow_dispatch' && (github.event.inputs.test_type == 'quick' || github.event.inputs.test_type == 'all'))
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          submodules: "recursive"
+
+      - name: Setup Xcode
+        uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: "latest-stable"
+
+      - name: Cache Swift dependencies
+        uses: actions/cache@v4
+        with:
+          path: |
+            WhisperRecorder/.build
+            ~/Library/Caches/org.swift.swiftpm
+          key: ${{ runner.os }}-swift-${{ hashFiles('**/Package.resolved') }}
+          restore-keys: |
+            ${{ runner.os }}-swift-
+
+      - name: Build whisper library
+        run: |
+          make -j$(nproc)
+
+      - name: Prepare WhisperRecorder dependencies
+        run: |
+          cd WhisperRecorder
+          mkdir -p libs
+          cp ../build/src/libwhisper.dylib libs/libwhisper.dylib || true
+          cp ../build/ggml/src/libggml.dylib libs/libggml.dylib || true
+          echo "📚 Libraries prepared for testing"
+
+      - name: Run quick E2E tests
+        run: |
+          cd WhisperRecorder
+          ./test-e2e.sh quick
+        env:
+          WHISPER_STDOUT_LOGS: "1"
+
+      - name: Archive test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: quick-test-results
+          path: |
+            WhisperRecorder/.build/*/debug/*.log
+            WhisperRecorder/test-results.xml
+          retention-days: 7
+
+  ui-tests:
+    runs-on: macos-latest
+    if: |
+      github.event_name == 'push' || 
+      (github.event_name == 'workflow_dispatch' && (github.event.inputs.test_type == 'ui' || github.event.inputs.test_type == 'all'))
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          submodules: "recursive"
+
+      - name: Setup Xcode
+        uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: "latest-stable"
+
+      - name: Cache Swift dependencies
+        uses: actions/cache@v4
+        with:
+          path: |
+            WhisperRecorder/.build
+            ~/Library/Caches/org.swift.swiftpm
+          key: ${{ runner.os }}-swift-${{ hashFiles('**/Package.resolved') }}
+          restore-keys: |
+            ${{ runner.os }}-swift-
+
+      - name: Build whisper library
+        run: |
+          make -j$(nproc)
+
+      - name: Prepare WhisperRecorder dependencies
+        run: |
+          cd WhisperRecorder
+          mkdir -p libs
+          cp ../build/src/libwhisper.dylib libs/libwhisper.dylib || true
+          cp ../build/ggml/src/libggml.dylib libs/libggml.dylib || true
+
+      - name: Run UI tests
+        run: |
+          cd WhisperRecorder
+          ./test-e2e.sh ui-full
+        env:
+          WHISPER_STDOUT_LOGS: "1"
+
+      - name: Archive UI test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ui-test-results
+          path: |
+            WhisperRecorder/.build/*/debug/*.log
+            WhisperRecorder/test-results.xml
+          retention-days: 7
+
+  performance-tests:
+    runs-on: macos-latest
+    if: |
+      github.event_name == 'push' && contains(github.ref, 'main') ||
+      (github.event_name == 'workflow_dispatch' && (github.event.inputs.test_type == 'performance' || github.event.inputs.test_type == 'all'))
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          submodules: "recursive"
+
+      - name: Setup Xcode
+        uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: "latest-stable"
+
+      - name: Cache Swift dependencies
+        uses: actions/cache@v4
+        with:
+          path: |
+            WhisperRecorder/.build
+            ~/Library/Caches/org.swift.swiftpm
+          key: ${{ runner.os }}-swift-${{ hashFiles('**/Package.resolved') }}
+          restore-keys: |
+            ${{ runner.os }}-swift-
+
+      - name: Build whisper library
+        run: |
+          make -j$(nproc)
+
+      - name: Prepare WhisperRecorder dependencies
+        run: |
+          cd WhisperRecorder
+          mkdir -p libs
+          cp ../build/src/libwhisper.dylib libs/libwhisper.dylib || true
+          cp ../build/ggml/src/libggml.dylib libs/libggml.dylib || true
+
+      - name: Run performance tests
+        run: |
+          cd WhisperRecorder
+          ./test-e2e.sh performance
+        env:
+          WHISPER_STDOUT_LOGS: "1"
+
+      - name: Upload performance metrics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: performance-test-results
+          path: |
+            WhisperRecorder/.build/*/debug/*.log
+            WhisperRecorder/performance-metrics.json
+          retention-days: 30
+
+  test-summary:
+    runs-on: ubuntu-latest
+    needs: [quick-tests, ui-tests, performance-tests]
+    if: always()
+
+    steps:
+      - name: Generate test summary
+        run: |
+          echo "## 🧪 Test Suite Results" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+
+          if [ "${{ needs.quick-tests.result }}" == "success" ]; then
+            echo "✅ **Quick E2E Tests**: Passed" >> $GITHUB_STEP_SUMMARY
+          elif [ "${{ needs.quick-tests.result }}" == "failure" ]; then
+            echo "❌ **Quick E2E Tests**: Failed" >> $GITHUB_STEP_SUMMARY
+          elif [ "${{ needs.quick-tests.result }}" == "skipped" ]; then
+            echo "⏭️ **Quick E2E Tests**: Skipped" >> $GITHUB_STEP_SUMMARY
+          fi
+
+          if [ "${{ needs.ui-tests.result }}" == "success" ]; then
+            echo "✅ **UI Tests**: Passed" >> $GITHUB_STEP_SUMMARY
+          elif [ "${{ needs.ui-tests.result }}" == "failure" ]; then
+            echo "❌ **UI Tests**: Failed" >> $GITHUB_STEP_SUMMARY
+          elif [ "${{ needs.ui-tests.result }}" == "skipped" ]; then
+            echo "⏭️ **UI Tests**: Skipped" >> $GITHUB_STEP_SUMMARY
+          fi
+
+          if [ "${{ needs.performance-tests.result }}" == "success" ]; then
+            echo "✅ **Performance Tests**: Passed" >> $GITHUB_STEP_SUMMARY
+          elif [ "${{ needs.performance-tests.result }}" == "failure" ]; then
+            echo "❌ **Performance Tests**: Failed" >> $GITHUB_STEP_SUMMARY
+          elif [ "${{ needs.performance-tests.result }}" == "skipped" ]; then
+            echo "⏭️ **Performance Tests**: Skipped" >> $GITHUB_STEP_SUMMARY
+          fi
+
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### 📊 Coverage Information" >> $GITHUB_STEP_SUMMARY
+          echo "- **Quick Tests**: Core functionality validation (~21 seconds)" >> $GITHUB_STEP_SUMMARY
+          echo "- **UI Tests**: Component integration testing (~1.5 seconds)" >> $GITHUB_STEP_SUMMARY
+          echo "- **Performance Tests**: Memory and speed benchmarks (~5 seconds)" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### 🚀 Commands Used" >> $GITHUB_STEP_SUMMARY
+          echo "```bash" >> $GITHUB_STEP_SUMMARY
+          echo "cd WhisperRecorder" >> $GITHUB_STEP_SUMMARY
+          echo "./test-e2e.sh quick    # Quick E2E tests" >> $GITHUB_STEP_SUMMARY
+          echo "./test-e2e.sh ui-full  # Complete UI suite" >> $GITHUB_STEP_SUMMARY
+          echo "./test-e2e.sh performance # Performance benchmarks" >> $GITHUB_STEP_SUMMARY
+          echo "```" >> $GITHUB_STEP_SUMMARY

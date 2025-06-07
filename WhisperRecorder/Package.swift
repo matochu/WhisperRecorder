@@ -48,5 +48,22 @@ let package = Package(
                 .unsafeFlags(["-Llibs"]),
             ]
         ),
+        // Test targets
+        .testTarget(
+            name: "WhisperRecorderTests",
+            dependencies: ["WhisperRecorder"],
+            path: "Tests/WhisperRecorderTests",
+            resources: [
+                .copy("TestAudioFiles/")
+            ]
+        ),
+        .testTarget(
+            name: "WhisperRecorderE2ETests",
+            dependencies: ["WhisperRecorder", "WhisperRecorderTests"],
+            path: "Tests/WhisperRecorderE2ETests",
+            resources: [
+                .copy("TestAudioFiles/")
+            ]
+        ),
     ]
 )

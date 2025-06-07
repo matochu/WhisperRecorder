@@ -22,7 +22,7 @@ struct WhisperModel {
 
 class WhisperWrapper {
     static let shared = WhisperWrapper()
-    private var modelPath: String?
+    var modelPath: String?
     private var wrapper: OpaquePointer?
     public var currentModel: WhisperModel
     public var useLanguageDetection: Bool = true
@@ -260,19 +260,62 @@ class WhisperWrapper {
         logInfo(.network, "Started downloading Whisper model...")
     }
 
+    // Function to find test model for testing environment
+    private func findTestModel() -> String? {
+        let fileManager = FileManager.default
+        
+        // Common test model paths to check
+        let testModelPaths = [
+            // TestModels directory relative to current working directory
+            "../TestModels/ggml-tiny.en.bin",
+            "../../TestModels/ggml-tiny.en.bin",
+            "../../../TestModels/ggml-tiny.en.bin",
+            // Absolute path variants
+            "/Users/\(NSUserName())/workspace/exp/WhisperRecorder2/TestModels/ggml-tiny.en.bin",
+            // Current directory variants
+            "./TestModels/ggml-tiny.en.bin",
+            "./ggml-tiny.en.bin"
+        ]
+        
+        for path in testModelPaths {
+            let expandedPath = NSString(string: path).expandingTildeInPath
+            if fileManager.fileExists(atPath: expandedPath) {
+                logInfo(.storage, "Found test model at: \(expandedPath)")
+                
+                // Automatically set the model path for testing
+                self.modelPath = expandedPath
+                
+                return expandedPath
+            }
+        }
+        
+        logInfo(.storage, "No test model found in common locations")
+        return nil
+    }
+    
     private func loadModel() {
-        guard let modelPath = modelPath else {
+        var finalModelPath = modelPath
+        
+        // If no model path is set, try to find test model for testing environment
+        if finalModelPath == nil {
+            finalModelPath = findTestModel()
+            if finalModelPath != nil {
+                logInfo(.storage, "Found test model for testing environment")
+            }
+        }
+        
+        guard let finalModelPath = finalModelPath else {
             logError(.storage, "Error: modelPath is nil in loadModel()")
             return
         }
 
-        logInfo(.storage, "Loading model from path: \(modelPath)")
+        logInfo(.storage, "Loading model from path: \(finalModelPath)")
 
         // Check if file exists and get its size
         let fileManager = FileManager.default
-        if fileManager.fileExists(atPath: modelPath) {
+        if fileManager.fileExists(atPath: finalModelPath) {
             do {
-                let attributes = try fileManager.attributesOfItem(atPath: modelPath)
+                let attributes = try fileManager.attributesOfItem(atPath: finalModelPath)
                 if let size = attributes[.size] as? UInt64 {
                     logInfo(.storage, "Model file size: \(size) bytes")
                 }
@@ -280,10 +323,10 @@ class WhisperWrapper {
                 logError(.storage, "Error getting model file attributes: \(error)")
             }
         } else {
-            logError(.storage, "Error: Model file does not exist at path \(modelPath)")
+            logError(.storage, "Error: Model file does not exist at path \(finalModelPath)")
         }
 
-        wrapper = whisper_wrapper_create(modelPath)
+        wrapper = whisper_wrapper_create(finalModelPath)
 
         if wrapper == nil {
             logError(.storage, "Failed to initialize whisper context")
@@ -302,6 +345,12 @@ class WhisperWrapper {
 
     func isModelLoaded() -> Bool {
         return wrapper != nil && whisper_wrapper_is_loaded(wrapper)
+    }
+    
+    func loadModelIfNeeded() {
+        if !isModelLoaded() {
+            loadModel()
+        }
     }
 
     func transcribe(audioFile: URL, completion: @escaping (Result<String, Error>) -> Void) {
