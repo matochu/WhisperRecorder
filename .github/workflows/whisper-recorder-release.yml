@@ -1,4 +1,4 @@
-name: WhisperRecorder Release
+name: Release
 
 on:
   push:
@@ -15,11 +15,6 @@ on:
           - minor
           - major
         default: "patch"
-      prerelease:
-        description: "Create pre-release (for feature branches)"
-        required: false
-        type: boolean
-        default: false
 
 env:
   APP_NAME: WhisperRecorder
@@ -27,6 +22,8 @@ env:
 jobs:
   release:
     runs-on: macos-latest
+    # Only run on main/master branch for production releases
+    if: github.ref_name == 'main' || github.ref_name == 'master' || github.event_name == 'push'
 
     steps:
       - name: Checkout code
@@ -42,8 +39,8 @@ jobs:
       - name: Calculate version
         id: version
         run: |
-          cd WhisperRecorder
-          
+          cd WhisperRecorder/
+
           if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
             # Get current version from VERSION file
             if [ -f "VERSION" ]; then
@@ -51,12 +48,12 @@ jobs:
             else
               CURRENT_VERSION="1.0.0"
             fi
-            
+          
             echo "Current version: $CURRENT_VERSION"
-            
+          
             # Parse version
             IFS='.' read -r major minor patch <<< "$CURRENT_VERSION"
-            
+          
             # Bump version based on input
             case "${{ github.event.inputs.bump_type }}" in
               major)
@@ -72,26 +69,23 @@ jobs:
                 patch=$((patch + 1))
                 ;;
             esac
-            
+          
             NEW_VERSION="$major.$minor.$patch"
-            
+          
             # Check that this is main/master branch (releases are for main branch only)
             BRANCH_NAME="${{ github.ref_name }}"
             if [ "$BRANCH_NAME" != "main" ] && [ "$BRANCH_NAME" != "master" ]; then
               echo "❌ ERROR: Production releases are for main/master branch only!"
               echo "Current branch: $BRANCH_NAME"
-              echo "Use the 'Demo Build' workflow for feature branch builds."
+              echo "Use the 'Preview Build' workflow for feature branch builds."
               exit 1
-            elif [ "${{ github.event.inputs.prerelease }}" = "true" ]; then
-              NEW_VERSION="$NEW_VERSION-pre"
-              IS_PRERELEASE=true
-            else
-              IS_PRERELEASE=false
             fi
-            
+          
+            IS_PRERELEASE=false
+          
             # Update VERSION file
             echo "$major.$minor.$patch" > VERSION
-            
+          
             echo "New version: $NEW_VERSION"
             echo "VERSION=$NEW_VERSION" >> $GITHUB_OUTPUT
             echo "TAG=v$NEW_VERSION" >> $GITHUB_OUTPUT
@@ -108,16 +102,27 @@ jobs:
 
       - name: Build WhisperRecorder
         run: |
-          cd WhisperRecorder
+          cd WhisperRecorder/
           VERSION="${{ steps.version.outputs.BASE_VERSION }}"
-          
+
           # Update version in VERSION file
           echo "$VERSION" > VERSION
-          
+
           # Create app icon
           if [ -f "create_icon.sh" ]; then
             ./create_icon.sh
           fi
+
+          # Build whisper library first
+          echo "🔧 Building whisper library..."
+          cd ..
+          make
+
+          # Copy whisper library to expected location
+          echo "📦 Copying whisper library to libs directory..."
+          cd WhisperRecorder
+          mkdir -p libs
+          cp ../build/src/libwhisper.dylib libs/libwhisper.dylib
 
           # Build the app
           ./whisper build
@@ -130,11 +135,11 @@ jobs:
 
       - name: Create release package
         run: |
-          cd WhisperRecorder
+          cd WhisperRecorder/
           VERSION="${{ steps.version.outputs.VERSION }}"
 
-          # Create release ZIP using whisper script
-          ./whisper release
+          # Create release ZIP using whisper script (auto-skip signing)
+          echo "" | ./whisper release
 
           # Rename to include version
           if [ -f "WhisperRecorder.zip" ]; then
@@ -143,24 +148,26 @@ jobs:
 
       - name: Generate release notes from CHANGELOG
         run: |
-          cd WhisperRecorder
+          cd WhisperRecorder/
           VERSION="${{ steps.version.outputs.VERSION }}"
           BASE_VERSION="${{ steps.version.outputs.BASE_VERSION }}"
-          
+
           # Start release notes
           echo "# WhisperRecorder v$VERSION" > release_notes.md
           echo "" >> release_notes.md
-          
-          # Extract changes from CHANGELOG.md if it exists
+
+          # Extract changes from CHANGELOG.md if it exists (check root directory)
           if [ -f "../CHANGELOG.md" ]; then
             echo "## What's New" >> release_notes.md
             echo "" >> release_notes.md
-            
+          
             # Try to extract unreleased section or specific version
             if grep -q "## \[Unreleased\]" "../CHANGELOG.md"; then
               echo "### Changes in this release:" >> release_notes.md
+              echo "" >> release_notes.md
               # Extract content between [Unreleased] and next version section
-              sed -n '/## \[Unreleased\]/,/## \[/p' "../CHANGELOG.md" | sed '$d' | tail -n +2 >> release_notes.md
+              # Include section headers and bullet points
+              awk '/^## \[Unreleased\]/{flag=1; next} /^## \[/{flag=0} flag && /^(###|-)/  ' "../CHANGELOG.md" >> release_notes.md
             else
               echo "### Recent changes:" >> release_notes.md
               # Fallback to git commits since last tag
@@ -224,25 +231,33 @@ jobs:
         run: |
           VERSION="${{ steps.version.outputs.BASE_VERSION }}"
           DATE=$(date +%Y-%m-%d)
-          
+
+          # Work from root directory where CHANGELOG.md is located
           if [ -f "CHANGELOG.md" ]; then
-            # Replace [Unreleased] with the new version
+            # Step 1: Replace [Unreleased] with the new version
             sed -i.bak "s/## \[Unreleased\]/## [$VERSION] - $DATE/" "CHANGELOG.md"
-            
-            # Add new Unreleased section at the top
-            sed -i.bak "/## \[$VERSION\]/i\\
-## [Unreleased]\\
-\\
-### Added\\
-\\
-### Fixed\\
-\\
-### Changed\\
-\\
-" "CHANGELOG.md"
-            
-            rm "CHANGELOG.md.bak"
-            
+          
+            # Step 2: Add new [Unreleased] section AT THE TOP (after title)
+            # Create temp file with header and new unreleased section
+            head -n 7 "CHANGELOG.md" > temp_top.md  # Keep title and intro
+            echo "" >> temp_top.md
+            echo "## [Unreleased]" >> temp_top.md
+            echo "" >> temp_top.md
+            echo "### Added" >> temp_top.md
+            echo "" >> temp_top.md
+            echo "### Fixed" >> temp_top.md
+            echo "" >> temp_top.md
+            echo "### Changed" >> temp_top.md
+            echo "" >> temp_top.md
+          
+            # Add the rest of the file (starting from version sections)
+            tail -n +8 "CHANGELOG.md" >> temp_top.md
+          
+            # Replace original with new structure
+            mv temp_top.md "CHANGELOG.md"
+          
+          
+          
             # Commit updated CHANGELOG
             git config --local user.email "action@github.com"
             git config --local user.name "GitHub Action"

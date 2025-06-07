@@ -1,10 +1,10 @@
 # WhisperRecorder Release Guide
 
-This guide explains how to create releases for WhisperRecorder using the automated GitHub workflow system.
+This guide explains how to create releases for WhisperRecorder using the automated release system.
 
 ## 🚀 Release Methods
 
-WhisperRecorder supports **3 ways** to create releases:
+WhisperRecorder supports **4 ways** to create releases:
 
 ### Method 1: Automatic Release (Recommended)
 
@@ -36,7 +36,29 @@ git commit -m "Release v1.4.0"
 git push origin v1.4.0
 ```
 
-### Method 3: Manual GitHub Workflow
+### Method 3: Local Preview/Publish Workflow
+
+For local builds with GitHub releases:
+
+```bash
+# Create preview release (no version bump)
+./whisper version preview
+# Creates: v1.3.1-branch-commit hash as GitHub pre-release
+
+# Publish with version bump
+./whisper version publish patch    # Local build + GitHub release + version bump
+./whisper version publish minor    # 1.3.1 → 1.4.0
+./whisper version publish major    # 1.3.1 → 2.0.0
+```
+
+**Benefits:**
+
+- Local build control (better for macOS compatibility)
+- GitHub pre-release support for testing
+- Proper branch-commit naming format
+- All GitHub CLI integration
+
+### Method 4: Manual GitHub Workflow
 
 1. Go to **https://github.com/your-repo/actions**
 2. Select **"WhisperRecorder Release"** workflow
@@ -47,9 +69,27 @@ git push origin v1.4.0
    - **major** → 1.4.0 → 2.0.0
 5. Click **"Run workflow"**
 
-## 🌿 Feature Branch Releases
+## 🌿 Preview & Testing Releases
 
-For testing and preview releases from feature branches:
+For testing and preview releases from any branch:
+
+### Local Preview Build (Recommended)
+
+```bash
+# From any branch (e.g., fix/bug-123)
+./whisper version preview
+# Creates: v1.3.1-fix-bug-123-a1b2c3d as GitHub pre-release
+# Package: WhisperRecorder-1.3.1-fix-bug-123-a1b2c3d-macOS-arm64.zip
+```
+
+**Features:**
+
+- No version bump (keeps current version)
+- Branch name + commit hash in name
+- GitHub pre-release (not latest)
+- Local build for better compatibility
+
+### GitHub Workflow Preview
 
 ```bash
 # From feature branch (e.g., feat/ui-improvements)
@@ -128,11 +168,14 @@ The automated workflow includes:
 ./whisper version bump minor   # 1.4.0 → 1.5.0
 ./whisper version bump major   # 1.4.0 → 2.0.0
 
-# Create git tag
-./whisper version tag
+# Local workflows
+./whisper version release      # Local release (no GitHub)
+./whisper version preview      # Preview build → GitHub pre-release
+./whisper version publish major # Local build + GitHub release + version bump
 
-# Full release (tag + GitHub trigger)
-./whisper version release
+# GitHub workflows
+./whisper version tag          # Create git tag only
+./whisper version tag-release  # Tag + push (triggers GitHub Action)
 ```
 
 ## 📋 Release Checklist

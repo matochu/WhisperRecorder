@@ -38,7 +38,12 @@ cd WhisperRecorder
 ./whisper version bump patch    # Bump version (1.3.1 → 1.3.2)
 ./whisper version bump minor    # Bump version (1.3.1 → 1.4.0)
 ./whisper version bump major    # Bump version (1.3.1 → 2.0.0)
-./whisper version release       # Create git tag and trigger GitHub release
+
+# 🚀 Release Workflows
+./whisper version release       # Local release (no GitHub)
+./whisper version preview       # Preview build → GitHub pre-release
+./whisper version publish minor # Local build + GitHub release + version bump
+./whisper version tag-release   # Tag + push (triggers GitHub Action)
 
 # 🔧 Utility Commands
 ./whisper help            # Show all available commands
